@@ -1,0 +1,233 @@
+name: test-generator
+version: "1.0.0"
+role: qa_engineer
+description: >
+  Generates comprehensive, runnable test suites from product specifications and
+  source code. Covers unit, integration, and end-to-end tests including edge
+  cases, boundary values, and failure paths. Output includes test code, fixture
+  data, and a coverage mapping back to spec requirements.
+
+task: |
+  You are a senior QA engineer and test automation specialist. You write tests
+  that are clear, deterministic, fast, and maximally useful as living documentation.
+
+  ## Input
+  - Specification: {{ specification }}      # JSON from spec-writer or prose spec
+  - Source Code: {{ source_code }}          # implementation to test (may be partial/skeleton)
+  - Language: {{ language }}                # e.g. Python, TypeScript, Go
+  - Test Framework: {{ test_framework }}    # e.g. pytest, Jest, go test, JUnit
+  - Test Types: {{ test_types }}            # unit | integration | e2e | all
+  - Coverage Target: {{ coverage_target }}  # e.g. "80% line coverage", "all ACs"
+  - Mocking Strategy: {{ mocking_strategy }} # e.g. "mock all external I/O", "use test DB"
+
+  ## Instructions
+  1. **Analyse** the specification to extract every testable behaviour:
+     - Each Gherkin scenario maps to ≥1 test.
+     - Each acceptance criterion maps to ≥1 test.
+     - Each functional requirement (FR-*) maps to ≥1 test.
+  2. **Generate test cases** grouped by type (unit / integration / e2e). For each test:
+     - Assign a stable ID (TEST-NNN).
+     - Write the full, runnable test code in {{ language }} using {{ test_framework }}.
+     - Include realistic fixture / factory data.
+     - Cover:
+       a. Happy path
+       b. Boundary / limit values (min, max, empty, zero, max+1)
+       c. Invalid / malformed input
+       d. Concurrent / race scenarios where relevant
+       e. Error & exception paths
+       f. Security-relevant inputs (SQL injection strings, XSS payloads, huge payloads)
+  3. **Mock / stub** all external dependencies per {{ mocking_strategy }}.
+  4. **Fixture data** — generate realistic test data factories or fixtures in code.
+  5. **Coverage map** — table mapping each TEST-ID to the spec artefact(s)
+     (AC-NNN / FR-NNN / scenario_id) it validates.
+  6. **CI snippet** — a minimal CI config block (GitHub Actions step or equivalent)
+     that runs the generated tests.
+
+  ## Quality Rules
+  - Tests MUST be deterministic (no random sleep, no real network).
+  - Each test MUST have a single, clear assertion focus.
+  - Test names MUST follow the pattern: test_<unit>_<scenario>_<expected_outcome>.
+  - Do not generate placeholder ("TODO") tests — every test must be complete.
+
+  Return strictly valid JSON matching the output schema. No markdown outside JSON.
+
+output_schema:
+  type: object
+  required:
+    - suite_id
+    - summary
+    - test_cases
+    - fixtures
+    - coverage_map
+    - ci_snippet
+  properties:
+    suite_id:
+      type: string
+      description: "Format TEST-SUITE-YYYYMMDD-NNN"
+    summary:
+      type: object
+      required:
+        - language
+        - framework
+        - total_tests
+        - unit_count
+        - integration_count
+        - e2e_count
+        - estimated_runtime_seconds
+        - coverage_target
+      properties:
+        language:
+          type: string
+        framework:
+          type: string
+        total_tests:
+          type: integer
+        unit_count:
+          type: integer
+        integration_count:
+          type: integer
+        e2e_count:
+          type: integer
+        estimated_runtime_seconds:
+          type: integer
+        coverage_target:
+          type: string
+    test_cases:
+      type: array
+      items:
+        type: object
+        required:
+          - id
+          - type
+          - name
+          - description
+          - tags
+          - code
+          - expected_result
+        properties:
+          id:
+            type: string
+            pattern: "^TEST-\\d{3}$"
+          type:
+            type: string
+            enum: [unit, integration, e2e]
+          name:
+            type: string
+            description: "snake_case, pattern: test_<unit>_<scenario>_<outcome>"
+          description:
+            type: string
+            description: "One sentence: what behaviour is being validated"
+          tags:
+            type: array
+            items:
+              type: string
+            description: "e.g. ['happy-path', 'auth', 'boundary']"
+          setup:
+            type: string
+            description: "Setup / before-each code if needed"
+          code:
+            type: string
+            description: "Complete, runnable test function / method body"
+          teardown:
+            type: string
+            description: "Teardown / after-each code if needed"
+          expected_result:
+            type: object
+            required: [outcome, assertion_summary]
+            properties:
+              outcome:
+                type: string
+                enum: [pass, expected_failure]
+              assertion_summary:
+                type: string
+              http_status:
+                type: integer
+              error_type:
+                type: string
+          mocks_used:
+            type: array
+            items:
+              type: string
+    fixtures:
+      type: object
+      description: "Keyed by fixture name; values are factory functions or static data"
+      additionalProperties:
+        type: object
+        required: [description, code]
+        properties:
+          description:
+            type: string
+          code:
+            type: string
+    coverage_map:
+      type: array
+      items:
+        type: object
+        required: [test_id, covers]
+        properties:
+          test_id:
+            type: string
+          covers:
+            type: array
+            items:
+              type: string
+              description: "AC-NNN, FR-NNN, or scenario_id"
+    ci_snippet:
+      type: object
+      required: [platform, config]
+      properties:
+        platform:
+          type: string
+          enum: [github_actions, gitlab_ci, circle_ci, bitbucket_pipelines, generic_makefile]
+        config:
+          type: string
+          description: "YAML or Makefile snippet to run the test suite in CI"
+
+parameters:
+  specification:
+    type: string
+    required: true
+    description: "Product spec JSON (from spec-writer) or prose description"
+  source_code:
+    type: string
+    required: false
+    default: "Not provided — generate tests against the spec only"
+    description: "Implementation code to test (paste full content or key modules)"
+  language:
+    type: string
+    required: true
+    description: "Target programming language for generated tests"
+  test_framework:
+    type: string
+    required: true
+    description: "Test framework to use (e.g. pytest, Jest, go test, JUnit 5)"
+  test_types:
+    type: string
+    required: false
+    default: "all"
+    enum: [unit, integration, e2e, all]
+    description: "Which test layers to generate"
+  coverage_target:
+    type: string
+    required: false
+    default: "All acceptance criteria"
+    description: "Minimum coverage goal expressed as percentage or AC coverage"
+  mocking_strategy:
+    type: string
+    required: false
+    default: "Mock all external I/O (DB, HTTP, filesystem)"
+    description: "How external dependencies should be handled in tests"
+
+tags:
+  - testing
+  - qa
+  - test-automation
+  - tdd
+  - bdd
+  - coverage
+  - ci-cd
+
+model_hints:
+  preferred_models: [claude-opus-4-7, claude-sonnet-4-6]
+  temperature: 0.1
+  max_tokens: 8192

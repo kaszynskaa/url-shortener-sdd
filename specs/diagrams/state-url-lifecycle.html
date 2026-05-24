@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>State Diagram — URL Lifecycle</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      max-width: 1100px;
+      margin: 0 auto 2.5rem;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 1.25rem;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f0f6fc;
+    }
+
+    header p {
+      margin-top: 0.4rem;
+      font-size: 0.9rem;
+      color: #8b949e;
+    }
+
+    .meta {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid #374151;
+      background: #1f2937;
+      color: #9ca3af;
+    }
+    .badge.blue   { background: #0d2137; border-color: #1d4ed8; color: #60a5fa; }
+    .badge.green  { background: #0a2218; border-color: #15803d; color: #4ade80; }
+    .badge.orange { background: #1f0d00; border-color: #c2410c; color: #fb923c; }
+
+    .content {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2.5rem;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      background: #1c2128;
+      border-bottom: 1px solid #30363d;
+      padding: 1rem 1.5rem;
+    }
+
+    .card-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+
+    .card-header p {
+      font-size: 0.82rem;
+      color: #8b949e;
+      margin-top: 0.3rem;
+    }
+
+    .diagram-wrap {
+      padding: 2.5rem 1.5rem;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid { min-width: 500px; }
+    .mermaid svg { background: transparent !important; }
+
+    /* State legend */
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      padding: 0 1.5rem 1.5rem;
+    }
+
+    .legend-item {
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      border: 1px solid;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .legend-item.active   { background: #0a2218; border-color: #15803d; }
+    .legend-item.expired  { background: #1f1200; border-color: #c2410c; }
+    .legend-item.suspended{ background: #1a0d37; border-color: #7c3aed; }
+    .legend-item.deleted  { background: #161b22; border-color: #484f58; }
+
+    .legend-item .state-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .active    .state-name   { color: #4ade80; }
+    .expired   .state-name   { color: #fb923c; }
+    .suspended .state-name   { color: #a78bfa; }
+    .deleted   .state-name   { color: #8b949e; }
+
+    .legend-item .http-code {
+      font-family: "SF Mono", "Fira Code", Menlo, monospace;
+      font-size: 0.78rem;
+      color: #8b949e;
+    }
+
+    .legend-item .desc {
+      font-size: 0.78rem;
+      color: #6e7681;
+      margin-top: 0.1rem;
+    }
+
+    /* Transition table */
+    .table-wrap {
+      padding: 0 1.5rem 1.5rem;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    thead tr { background: #1c2128; }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: #8b949e;
+      font-weight: 600;
+      border-bottom: 1px solid #30363d;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 0.55rem 1rem;
+      border-bottom: 1px solid #21262d;
+      color: #e6edf3;
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1c2128; }
+
+    code {
+      font-family: "SF Mono", "Fira Code", Menlo, monospace;
+      font-size: 0.78rem;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      color: #79c0ff;
+    }
+
+    .http {
+      font-family: "SF Mono", "Fira Code", Menlo, monospace;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .http.h302 { color: #4ade80; }
+    .http.h404 { color: #f87171; }
+    .http.h410 { color: #fb923c; }
+    .http.h451 { color: #a78bfa; }
+
+    .arrow { color: #8b949e; }
+
+    .note {
+      margin: 0 1.5rem 1.5rem;
+      background: #0d2137;
+      border: 1px solid #1d4ed8;
+      border-radius: 8px;
+      padding: 0.85rem 1.1rem;
+      font-size: 0.82rem;
+      color: #93c5fd;
+      line-height: 1.6;
+    }
+    .note strong { color: #bfdbfe; }
+
+    footer {
+      max-width: 1100px;
+      margin: 3rem auto 0;
+      padding-top: 1.25rem;
+      border-top: 1px solid #30363d;
+      font-size: 0.78rem;
+      color: #484f58;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>State Diagram — URL Lifecycle</h1>
+  <p>All possible states of a short URL from creation through expiry, suspension, and final deletion.</p>
+  <div class="meta">
+    <span class="badge blue">SPEC-20260524-001</span>
+    <span class="badge green">spec-writer v1.0.0</span>
+    <span class="badge orange">FR-005 · FR-006</span>
+    <span class="badge">NFR-007</span>
+  </div>
+</header>
+
+<div class="content">
+
+  <!-- State diagram -->
+  <div class="card">
+    <div class="card-header">
+      <h2>URL State Machine</h2>
+      <p>Transitions driven by owner actions, system TTL sweeper, and admin policy enforcement.</p>
+    </div>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+stateDiagram-v2
+    direction LR
+
+    [*] --> Active : POST /api/v1/urls\n✓ created successfully
+
+    Active     --> Expired    : expires_at reached\n(TTL sweeper or on-access check)
+    Active     --> Deleted    : DELETE /api/v1/urls/{code}\nby owner → soft-delete
+    Active     --> Suspended  : Abuse detected\n(admin or auto-policy)
+
+    Expired    --> Active     : PATCH /api/v1/urls/{code}\nextends expiresAt (owner)
+    Expired    --> Deleted    : Owner deletes explicitly\nOR auto-purge after 30-day grace
+
+    Suspended  --> Active     : Admin reinstates\n(clears suspension flag)
+    Suspended  --> Deleted    : Admin removes\nOR owner requests deletion
+
+    Deleted    --> [*]
+
+    state Active {
+        [*] --> Serving
+        Serving : GET /{shortCode}\n→ 302 Found + Location\n+ click event recorded
+    }
+
+    state Expired {
+        [*] --> Halted
+        Halted : GET /{shortCode}\n→ 410 Gone\n{ code: URL_EXPIRED }\nNo redirect · No click event
+    }
+
+    state Suspended {
+        [*] --> Blocked
+        Blocked : GET /{shortCode}\n→ 451 Unavailable\n{ code: URL_SUSPENDED }\nNo redirect · No click event
+    }
+
+    state Deleted {
+        [*] --> Gone
+        Gone : GET /{shortCode}\n→ 404 Not Found\n{ code: SHORT_CODE_NOT_FOUND }
+    }
+      </div>
+    </div>
+
+    <!-- State legend -->
+    <div class="legend">
+      <div class="legend-item active">
+        <span class="state-name">● Active</span>
+        <span class="http-code">GET /{code} → 302 Found</span>
+        <span class="desc">Redirects to longUrl. Click event recorded asynchronously.</span>
+      </div>
+      <div class="legend-item expired">
+        <span class="state-name">◌ Expired</span>
+        <span class="http-code">GET /{code} → 410 Gone</span>
+        <span class="desc">TTL elapsed. No redirect. Owner may extend TTL to restore.</span>
+      </div>
+      <div class="legend-item suspended">
+        <span class="state-name">⊘ Suspended</span>
+        <span class="http-code">GET /{code} → 451 Unavailable</span>
+        <span class="desc">Admin-flagged abuse. RFC 7725 — intentional suppression, not unknown code.</span>
+      </div>
+      <div class="legend-item deleted">
+        <span class="state-name">✕ Deleted</span>
+        <span class="http-code">GET /{code} → 404 Not Found</span>
+        <span class="desc">Soft-deleted. Row retained for audit; hard purge after 90-day retention window.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transition table -->
+  <div class="card">
+    <div class="card-header">
+      <h2>State Transition Table</h2>
+      <p>Complete enumeration of every valid transition, its trigger, and actor.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>From</th>
+            <th></th>
+            <th>To</th>
+            <th>Trigger</th>
+            <th>Actor</th>
+            <th>HTTP after transition</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>—</td>
+            <td class="arrow">→</td>
+            <td><strong>Active</strong></td>
+            <td><code>POST /api/v1/urls</code> succeeds</td>
+            <td>API client</td>
+            <td><span class="http h302">302 Found</span></td>
+          </tr>
+          <tr>
+            <td><strong>Active</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Expired</strong></td>
+            <td><code>expires_at</code> timestamp passes (sweeper or on-access)</td>
+            <td>System</td>
+            <td><span class="http h410">410 Gone</span></td>
+          </tr>
+          <tr>
+            <td><strong>Active</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Deleted</strong></td>
+            <td><code>DELETE /api/v1/urls/{code}</code></td>
+            <td>Owner</td>
+            <td><span class="http h404">404 Not Found</span></td>
+          </tr>
+          <tr>
+            <td><strong>Active</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Suspended</strong></td>
+            <td>Abuse policy / admin flag</td>
+            <td>Admin / System</td>
+            <td><span class="http h451">451 Unavailable</span></td>
+          </tr>
+          <tr>
+            <td><strong>Expired</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Active</strong></td>
+            <td><code>PATCH /api/v1/urls/{code}</code> extends TTL</td>
+            <td>Owner</td>
+            <td><span class="http h302">302 Found</span> (resumes)</td>
+          </tr>
+          <tr>
+            <td><strong>Expired</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Deleted</strong></td>
+            <td>Owner deletes or auto-purge (30-day grace)</td>
+            <td>Owner / System</td>
+            <td><span class="http h404">404 Not Found</span></td>
+          </tr>
+          <tr>
+            <td><strong>Suspended</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Active</strong></td>
+            <td>Admin clears suspension flag</td>
+            <td>Admin</td>
+            <td><span class="http h302">302 Found</span> (resumes)</td>
+          </tr>
+          <tr>
+            <td><strong>Suspended</strong></td>
+            <td class="arrow">→</td>
+            <td><strong>Deleted</strong></td>
+            <td>Admin removes or owner requests deletion</td>
+            <td>Admin / Owner</td>
+            <td><span class="http h404">404 Not Found</span></td>
+          </tr>
+          <tr>
+            <td><strong>Deleted</strong></td>
+            <td class="arrow">→</td>
+            <td>—</td>
+            <td>Terminal state — no recovery</td>
+            <td>—</td>
+            <td><span class="http h404">404 Not Found</span> (permanent)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Short-code reuse freeze:</strong> A <code>short_code</code> from a Deleted URL
+      MUST NOT be reused for 30 days to avoid confusion for users who bookmarked the old link.
+      <br /><br />
+      <strong>451 vs 404 for Suspended:</strong> HTTP 451 (Unavailable For Legal Reasons) is
+      used instead of 404 to signal intentional suppression rather than an unknown code,
+      per <a href="https://www.rfc-editor.org/rfc/rfc7725" style="color:#60a5fa">RFC 7725</a>.
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span>SPEC-20260524-001 · spec-writer v1.0.0 · 2026-05-24</span>
+  <span>specs/diagrams/state-url-lifecycle.html</span>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    stateDiagram: {
+      useMaxWidth: true,
+    },
+    themeVariables: {
+      darkMode: true,
+      background: '#161b22',
+      primaryColor: '#0a2218',
+      primaryTextColor: '#f0f6fc',
+      primaryBorderColor: '#15803d',
+      lineColor: '#8b949e',
+      secondaryColor: '#1c2128',
+      tertiaryColor: '#0d1117',
+      nodeBorder: '#30363d',
+      clusterBkg: '#1c2128',
+      titleColor: '#f0f6fc',
+      edgeLabelBackground: '#161b22',
+      transitionColor: '#8b949e',
+    }
+  });
+</script>
+</body>
+</html>

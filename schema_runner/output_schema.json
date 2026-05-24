@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "url-shortener/UrlResponse",
+  "title": "UrlResponse",
+  "description": "Schema enforced on Claude API output when generating a sample UrlResponse. Used in schema_runner.py (Part 3.3). Matches the OpenAPI component defined in specs/url-shortener.yaml.",
+  "type": "object",
+  "required": ["shortCode", "shortUrl", "longUrl", "createdAt", "isActive"],
+  "additionalProperties": false,
+  "properties": {
+    "shortCode": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{3,32}$",
+      "description": "The generated or custom short code. REQ: FR-001, ADR-04."
+    },
+    "shortUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://sho\\.rt/[A-Za-z0-9-]{3,32}$",
+      "description": "Fully-qualified short URL. REQ: AC-001."
+    },
+    "longUrl": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048,
+      "description": "The original long URL. REQ: FR-001."
+    },
+    "alias": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9-]{3,32}$",
+      "description": "Custom alias if provided, else null. REQ: FR-007."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 creation timestamp."
+    },
+    "expiresAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Expiry timestamp, or null if no TTL set. REQ: FR-009."
+    },
+    "isActive": {
+      "type": "boolean",
+      "description": "False after soft-delete or expiry. REQ: FR-005, FR-006."
+    }
+  }
+}

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sequence Diagram — URL Shortening & Redirect Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      max-width: 1100px;
+      margin: 0 auto 2.5rem;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 1.25rem;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f0f6fc;
+      letter-spacing: -0.3px;
+    }
+
+    header p {
+      margin-top: 0.4rem;
+      font-size: 0.9rem;
+      color: #8b949e;
+    }
+
+    header .meta {
+      display: flex;
+      gap: 1.2rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    header .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #9ca3af;
+    }
+
+    header .badge.blue  { background: #0d2137; border-color: #1d4ed8; color: #60a5fa; }
+    header .badge.green { background: #0a2218; border-color: #15803d; color: #4ade80; }
+
+    .diagrams {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3rem;
+    }
+
+    .diagram-block {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .diagram-block header {
+      background: #1c2128;
+      border-bottom: 1px solid #30363d;
+      padding: 1rem 1.5rem;
+      margin: 0;
+    }
+
+    .diagram-block header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #f0f6fc;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .diagram-block header p {
+      font-size: 0.82rem;
+      color: #8b949e;
+      margin-top: 0.3rem;
+    }
+
+    .step-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.5rem;
+      height: 1.5rem;
+      border-radius: 50%;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: #1d4ed8;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .diagram-wrap {
+      padding: 2rem 1.5rem;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid {
+      min-width: 600px;
+    }
+
+    /* override mermaid defaults for dark bg */
+    .mermaid svg { background: transparent !important; }
+
+    footer {
+      max-width: 1100px;
+      margin: 3rem auto 0;
+      padding-top: 1.25rem;
+      border-top: 1px solid #30363d;
+      font-size: 0.78rem;
+      color: #484f58;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Sequence Diagram — URL Shortening &amp; Redirect Flow</h1>
+  <p>Three system-level flows: URL creation, public redirect (hot path), and URL deletion.</p>
+  <div class="meta">
+    <span class="badge blue">SPEC-20260524-001</span>
+    <span class="badge green">spec-writer v1.0.0</span>
+    <span class="badge">FR-001 · FR-002 · FR-005</span>
+    <span class="badge">NFR-001 · NFR-003 · NFR-004 · NFR-006</span>
+  </div>
+</header>
+
+<div class="diagrams">
+
+  <!-- Flow 1 -->
+  <div class="diagram-block">
+    <header>
+      <h2><span class="step-badge">1</span> Create Short URL (Authenticated)</h2>
+      <p>POST /api/v1/urls — covers auth, rate-limiting, SSRF validation, alias conflict, persistence &amp; cache warm-up.</p>
+    </header>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Client as API Client
+    participant GW    as API Gateway<br/>(rate limiter + auth)
+    participant SVC   as URL Service
+    participant Val   as URL Validator<br/>(SSRF + scheme check)
+    participant Cache as Redis Cache
+    participant DB    as PostgreSQL
+    participant Evt   as Event Bus<br/>(async analytics)
+
+    Client->>GW: POST /api/v1/urls<br/>{ longUrl, alias?, expiresAt? }<br/>X-API-Key: &lt;key&gt;
+
+    GW->>GW: Validate API key → resolve userId
+    GW->>GW: Check rate limit bucket (100 req/min per key)
+
+    alt Rate limit exceeded
+        GW-->>Client: 429 Too Many Requests<br/>Retry-After: &lt;seconds&gt;
+    end
+
+    GW->>SVC: createUrl(userId, longUrl, alias, expiresAt)
+
+    SVC->>Val: validate(longUrl)
+    Val->>Val: Check scheme (http/https only)
+    Val->>Val: Resolve hostname — block RFC 1918 / link-local
+
+    alt Invalid scheme or SSRF target
+        Val-->>SVC: ValidationError(code)
+        SVC-->>GW: 422 Unprocessable Entity
+        GW-->>Client: { code: INVALID_SCHEME | SSRF_BLOCKED }
+    end
+
+    Val-->>SVC: OK
+
+    opt alias provided
+        SVC->>DB: SELECT id FROM urls WHERE short_code = alias
+        DB-->>SVC: row | null
+        alt Alias already taken
+            SVC-->>GW: 409 Conflict
+            GW-->>Client: { code: ALIAS_TAKEN }
+        end
+    end
+
+    SVC->>SVC: Generate shortCode (NanoID 8 chars) if no alias
+
+    SVC->>DB: INSERT INTO urls<br/>(short_code, long_url, user_id, expires_at, created_at)
+    DB-->>SVC: url record
+
+    SVC->>Cache: SET shortCode → longUrl<br/>EX = TTL (or 86400s default)
+    Cache-->>SVC: OK
+
+    SVC-->>GW: UrlResponse
+    GW-->>Client: 201 Created<br/>{ shortUrl, shortCode, expiresAt, createdAt }
+      </div>
+    </div>
+  </div>
+
+  <!-- Flow 2 -->
+  <div class="diagram-block">
+    <header>
+      <h2><span class="step-badge">2</span> Redirect to Original URL (Public Hot Path)</h2>
+      <p>GET /{shortCode} — cache-first resolution, expiry/deletion checks, async click event recording.</p>
+    </header>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Visitor as Browser / Client
+    participant Edge  as CDN / Edge Layer
+    participant SVC   as URL Service
+    participant Cache as Redis Cache
+    participant DB    as PostgreSQL
+    participant Evt   as Analytics Worker<br/>(async)
+
+    Visitor->>Edge: GET /aB3xY9
+
+    Edge->>Cache: GET aB3xY9
+    Cache-->>Edge: longUrl (cache HIT) OR nil
+
+    alt Cache HIT (≥ 95% of requests)
+        Edge-->>Visitor: 302 Found<br/>Location: &lt;longUrl&gt;<br/>Cache-Control: no-store
+        Edge-)Evt: ClickEvent{ shortCode, ip, ua, referer, ts } [fire-and-forget]
+    else Cache MISS
+        Edge->>SVC: resolve(aB3xY9)
+        SVC->>DB: SELECT long_url, expires_at, deleted_at<br/>FROM urls WHERE short_code = 'aB3xY9'
+        DB-->>SVC: row | null
+
+        alt Not found or deleted
+            SVC-->>Edge: 404 Not Found
+            Edge-->>Visitor: 404 { code: SHORT_CODE_NOT_FOUND }
+        else Expired
+            SVC-->>Edge: 410 Gone
+            Edge-->>Visitor: 410 { code: URL_EXPIRED }
+        else Active
+            SVC->>Cache: SET aB3xY9 → longUrl EX 86400
+            SVC-->>Edge: longUrl
+            Edge-->>Visitor: 302 Found<br/>Location: &lt;longUrl&gt;
+            Edge-)Evt: ClickEvent [fire-and-forget]
+        end
+    end
+
+    Note over Evt: Async: hash IP (SHA-256 + salt),<br/>geolocate country, persist CLICKS row
+      </div>
+    </div>
+  </div>
+
+  <!-- Flow 3 -->
+  <div class="diagram-block">
+    <header>
+      <h2><span class="step-badge">3</span> Delete Short URL (Owner)</h2>
+      <p>DELETE /api/v1/urls/{shortCode} — ownership check, soft-delete, cache invalidation.</p>
+    </header>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Owner as URL Owner
+    participant GW    as API Gateway
+    participant SVC   as URL Service
+    participant Cache as Redis Cache
+    participant DB    as PostgreSQL
+
+    Owner->>GW: DELETE /api/v1/urls/aB3xY9<br/>X-API-Key: &lt;key&gt;
+    GW->>GW: Validate API key → resolve userId
+    GW->>SVC: deleteUrl(userId, "aB3xY9")
+    SVC->>DB: SELECT user_id FROM urls WHERE short_code = 'aB3xY9'
+    DB-->>SVC: row
+
+    alt Not the owner
+        SVC-->>GW: 403 Forbidden
+        GW-->>Owner: { code: FORBIDDEN }
+    else Owner confirmed
+        SVC->>DB: UPDATE urls SET deleted_at = NOW()<br/>WHERE short_code = 'aB3xY9'
+        DB-->>SVC: OK
+        SVC->>Cache: DEL aB3xY9
+        Cache-->>SVC: OK
+        SVC-->>GW: 204 No Content
+        GW-->>Owner: 204 No Content
+    end
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span>SPEC-20260524-001 · spec-writer v1.0.0 · 2026-05-24</span>
+  <span>specs/diagrams/sequence-url-shortening.html</span>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    sequence: {
+      actorMargin: 60,
+      messageMargin: 35,
+      mirrorActors: false,
+      useMaxWidth: true,
+    },
+    themeVariables: {
+      darkMode: true,
+      background: '#161b22',
+      primaryColor: '#1d4ed8',
+      primaryTextColor: '#f0f6fc',
+      primaryBorderColor: '#3b82f6',
+      lineColor: '#8b949e',
+      secondaryColor: '#1c2128',
+      tertiaryColor: '#0d1117',
+      noteBkgColor: '#1c2128',
+      noteTextColor: '#e6edf3',
+      noteBorderColor: '#30363d',
+      activationBkgColor: '#0d2137',
+      activationBorderColor: '#3b82f6',
+      labelBoxBkgColor: '#1c2128',
+      labelBoxBorderColor: '#30363d',
+      labelTextColor: '#e6edf3',
+      loopTextColor: '#e6edf3',
+      altSectionBkgColor: '#0d1117',
+    }
+  });
+</script>
+</body>
+</html>

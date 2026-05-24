@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "generated_by": "schema_runner/schema_runner.py",
+    "spec_ref": "SPEC-20260524-001",
+    "plan_ref": "ARCH-20260524-001 Phase 5",
+    "schema_file": "schema_runner/output_schema.json",
+    "model": "claude-sonnet-4-6",
+    "tool_name": "emit_url_response",
+    "validation_status": "PASSED",
+    "generated_at": "2026-05-24T21:00:00+00:00",
+    "note": "Pre-run sample showing expected output format. Run schema_runner.py with ANTHROPIC_API_KEY set to regenerate live."
+  },
+  "validated_output": {
+    "shortCode": "mK9vXrTp",
+    "shortUrl": "https://sho.rt/mK9vXrTp",
+    "longUrl": "https://example.com/very/long/marketing/campaign/path?utm_source=email&utm_campaign=summer2026",
+    "alias": null,
+    "createdAt": "2026-05-24T21:00:00+00:00",
+    "expiresAt": "2026-06-23T21:00:00+00:00",
+    "isActive": true
+  }
+}

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ER Diagram — URL Shortener Data Model</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      max-width: 1200px;
+      margin: 0 auto 2.5rem;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 1.25rem;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f0f6fc;
+    }
+
+    header p {
+      margin-top: 0.4rem;
+      font-size: 0.9rem;
+      color: #8b949e;
+    }
+
+    header .meta {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #9ca3af;
+    }
+    .badge.blue  { background: #0d2137; border-color: #1d4ed8; color: #60a5fa; }
+    .badge.green { background: #0a2218; border-color: #15803d; color: #4ade80; }
+    .badge.purple{ background: #1a0d37; border-color: #7c3aed; color: #a78bfa; }
+
+    .content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2.5rem;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      background: #1c2128;
+      border-bottom: 1px solid #30363d;
+      padding: 1rem 1.5rem;
+    }
+
+    .card-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+
+    .card-header p {
+      font-size: 0.82rem;
+      color: #8b949e;
+      margin-top: 0.3rem;
+    }
+
+    .diagram-wrap {
+      padding: 2.5rem 1.5rem;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid { min-width: 700px; }
+    .mermaid svg { background: transparent !important; }
+
+    /* Index table */
+    .table-wrap {
+      padding: 0 1.5rem 1.5rem;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    thead tr {
+      background: #1c2128;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: #8b949e;
+      font-weight: 600;
+      border-bottom: 1px solid #30363d;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 0.55rem 1rem;
+      border-bottom: 1px solid #21262d;
+      color: #e6edf3;
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1c2128; }
+
+    code {
+      font-family: "SF Mono", "Fira Code", Menlo, monospace;
+      font-size: 0.78rem;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      color: #79c0ff;
+    }
+
+    .tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.1rem 0.5rem;
+      border-radius: 4px;
+      margin-right: 0.25rem;
+    }
+    .tag.btree   { background: #0a2218; color: #4ade80; border: 1px solid #15803d; }
+    .tag.hash    { background: #1a0d37; color: #a78bfa; border: 1px solid #7c3aed; }
+    .tag.partial { background: #1f1200; color: #fb923c; border: 1px solid #c2410c; }
+    .tag.comp    { background: #0d2137; color: #60a5fa; border: 1px solid #1d4ed8; }
+
+    .note {
+      margin: 1rem 1.5rem 1.5rem;
+      background: #0d2137;
+      border: 1px solid #1d4ed8;
+      border-radius: 8px;
+      padding: 0.85rem 1.1rem;
+      font-size: 0.82rem;
+      color: #93c5fd;
+      line-height: 1.6;
+    }
+
+    .note strong { color: #bfdbfe; }
+
+    footer {
+      max-width: 1200px;
+      margin: 3rem auto 0;
+      padding-top: 1.25rem;
+      border-top: 1px solid #30363d;
+      font-size: 0.78rem;
+      color: #484f58;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ER Diagram — URL Shortener Data Model</h1>
+  <p>Five tables covering URL storage, click analytics, rate limiting, users, and security audit logging.</p>
+  <div class="meta">
+    <span class="badge blue">SPEC-20260524-001</span>
+    <span class="badge green">spec-writer v1.0.0</span>
+    <span class="badge purple">PostgreSQL 16</span>
+    <span class="badge">NFR-005 · NFR-006</span>
+  </div>
+</header>
+
+<div class="content">
+
+  <!-- ER Diagram -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Entity Relationship Diagram</h2>
+      <p>All tables, fields, types, primary / foreign / unique keys, and relationships.</p>
+    </div>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+erDiagram
+
+    USERS {
+        uuid        id            PK  "gen_random_uuid()"
+        varchar254  email         UK  "NOT NULL"
+        varchar64   api_key       UK  "NOT NULL — hashed SHA-256"
+        varchar20   plan              "free | pro | enterprise"
+        int         rate_limit        "req/min override, NULL = plan default"
+        boolean     is_active         "DEFAULT true"
+        timestamptz created_at        "DEFAULT now()"
+        timestamptz updated_at        "DEFAULT now()"
+    }
+
+    URLS {
+        uuid        id            PK  "gen_random_uuid()"
+        uuid        user_id       FK  "NOT NULL → USERS.id"
+        text        long_url          "NOT NULL, max 2048 chars"
+        varchar32   short_code    UK  "NOT NULL — NanoID or custom alias"
+        varchar32   custom_alias      "NULL if auto-generated"
+        boolean     is_active         "DEFAULT true"
+        timestamptz expires_at        "NULL = no expiry"
+        timestamptz created_at        "DEFAULT now()"
+        timestamptz updated_at        "DEFAULT now()"
+        timestamptz deleted_at        "NULL = not deleted (soft delete)"
+    }
+
+    CLICKS {
+        uuid        id            PK  "gen_random_uuid()"
+        uuid        url_id        FK  "NOT NULL → URLS.id"
+        varchar64   ip_hash           "NOT NULL — SHA-256(ip + tenant_salt)"
+        varchar512  user_agent        "NULL acceptable"
+        varchar512  referer           "NULL acceptable"
+        char2       country_code      "ISO 3166-1 alpha-2, NULL if unknown"
+        timestamptz clicked_at        "NOT NULL DEFAULT now()"
+    }
+
+    RATE_LIMIT_WINDOWS {
+        varchar128  bucket_key    PK  "format: userId:windowStart"
+        int         count             "NOT NULL DEFAULT 0"
+        int         limit             "NOT NULL — copied from user plan"
+        timestamptz window_start      "NOT NULL"
+        timestamptz reset_at          "NOT NULL — window_start + 60s"
+    }
+
+    AUDIT_LOG {
+        uuid        id            PK  "gen_random_uuid()"
+        uuid        user_id       FK  "NULL for unauthenticated events"
+        varchar64   event_type        "NOT NULL — SSRF_BLOCKED, URL_CREATED…"
+        varchar32   short_code        "NULL for non-URL events"
+        jsonb       metadata          "arbitrary event payload"
+        varchar45   client_ip         "raw IP — security log retention policy"
+        timestamptz occurred_at       "NOT NULL DEFAULT now()"
+    }
+
+    USERS     ||--o{ URLS               : "owns"
+    URLS      ||--o{ CLICKS             : "receives clicks"
+    USERS     ||--o{ RATE_LIMIT_WINDOWS : "throttled by"
+    USERS     ||--o{ AUDIT_LOG          : "actor in"
+      </div>
+    </div>
+  </div>
+
+  <!-- Index table -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Index Strategy</h2>
+      <p>Indexes critical for redirect hot-path performance and analytics query patterns.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>Index Name</th>
+            <th>Columns</th>
+            <th>Type</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>urls</code></td>
+            <td><code>idx_urls_short_code</code></td>
+            <td><code>short_code</code></td>
+            <td><span class="tag btree">B-tree UK</span></td>
+            <td>O(1) redirect lookup — primary hot path</td>
+          </tr>
+          <tr>
+            <td><code>urls</code></td>
+            <td><code>idx_urls_user_id_created</code></td>
+            <td><code>user_id, created_at DESC</code></td>
+            <td><span class="tag comp">Composite</span></td>
+            <td>List user's URLs sorted by recency</td>
+          </tr>
+          <tr>
+            <td><code>urls</code></td>
+            <td><code>idx_urls_expires_active</code></td>
+            <td><code>expires_at, is_active</code></td>
+            <td><span class="tag partial">Partial</span></td>
+            <td>TTL expiry sweeper job — WHERE is_active = true</td>
+          </tr>
+          <tr>
+            <td><code>clicks</code></td>
+            <td><code>idx_clicks_url_id_ts</code></td>
+            <td><code>url_id, clicked_at DESC</code></td>
+            <td><span class="tag comp">Composite</span></td>
+            <td>Time-series stats queries per short link</td>
+          </tr>
+          <tr>
+            <td><code>clicks</code></td>
+            <td><code>idx_clicks_clicked_at</code></td>
+            <td><code>clicked_at</code></td>
+            <td><span class="tag btree">B-tree</span></td>
+            <td>Global analytics rollups + partition pruning</td>
+          </tr>
+          <tr>
+            <td><code>audit_log</code></td>
+            <td><code>idx_audit_event_ts</code></td>
+            <td><code>event_type, occurred_at DESC</code></td>
+            <td><span class="tag comp">Composite</span></td>
+            <td>Security monitoring queries by event type</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <strong>Partitioning:</strong> The <code>CLICKS</code> table SHOULD be range-partitioned by
+      <code>clicked_at</code> (monthly) as it will grow into hundreds of millions of rows.
+      Partition pruning ensures stats queries scan only the relevant months.
+      <br /><br />
+      <strong>Migration strategy:</strong> Greenfield schema — no existing data migration for v1.
+      Future changes MUST use <code>CREATE INDEX CONCURRENTLY</code> and non-locking
+      <code>ADD COLUMN … DEFAULT</code> before <code>SET NOT NULL</code>.
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span>SPEC-20260524-001 · spec-writer v1.0.0 · 2026-05-24</span>
+  <span>specs/diagrams/er-data-model.html</span>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    er: {
+      diagramPadding: 30,
+      layoutDirection: 'TB',
+      minEntityWidth: 100,
+      minEntityHeight: 75,
+      entityPadding: 15,
+      useMaxWidth: true,
+    },
+    themeVariables: {
+      darkMode: true,
+      background: '#161b22',
+      primaryColor: '#0d2137',
+      primaryTextColor: '#f0f6fc',
+      primaryBorderColor: '#3b82f6',
+      lineColor: '#8b949e',
+      secondaryColor: '#1c2128',
+      tertiaryColor: '#0d1117',
+      edgeLabelBackground: '#1c2128',
+      attributeBackgroundColorEven: '#161b22',
+      attributeBackgroundColorOdd: '#1c2128',
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+name: spec-writer
+version: "1.0.0"
+role: product_analyst
+description: >
+  Converts raw feature requests into structured product specifications using
+  SHALL/MUST requirement language, Gherkin acceptance scenarios, and explicit
+  acceptance criteria. Ensures requirements are unambiguous, testable, and
+  traceable to business goals.
+
+task: |
+  You are a senior product analyst with expertise in writing precise,
+  unambiguous software specifications.
+
+  Given the following feature request, produce a complete product specification.
+
+  ## Input
+  - Feature Request: {{ feature_request }}
+  - Target Users: {{ target_users }}
+  - Business Context: {{ business_context }}
+  - Priority: {{ priority }}           # e.g. P0 / P1 / P2
+  - Constraints: {{ constraints }}     # e.g. must be GDPR-compliant, max latency 200 ms
+
+  ## Instructions
+  1. Restate the feature as a clear, one-sentence **Problem Statement**.
+  2. List **Functional Requirements** using SHALL / MUST / SHOULD / MAY language
+     (RFC 2119). Number each requirement (FR-001, FR-002, …).
+  3. List **Non-Functional Requirements** (performance, security, accessibility,
+     scalability) numbered NFR-001, NFR-002, …
+  4. Write **Gherkin Scenarios** (Given / When / Then) covering:
+     - The primary happy path
+     - At least two edge cases
+     - At least one failure / error path
+  5. Define explicit **Acceptance Criteria** — a checklist that QA can tick off.
+  6. Identify **Out of Scope** items to prevent scope creep.
+  7. List any **Open Questions** or assumptions that need stakeholder sign-off.
+
+  Return your answer strictly as valid JSON matching the output schema below.
+  Do not include markdown fences or commentary outside the JSON object.
+
+output_schema:
+  type: object
+  required:
+    - spec_id
+    - problem_statement
+    - functional_requirements
+    - non_functional_requirements
+    - gherkin_scenarios
+    - acceptance_criteria
+    - out_of_scope
+    - open_questions
+  properties:
+    spec_id:
+      type: string
+      description: "Auto-generated ID, format SPEC-YYYYMMDD-NNN"
+    problem_statement:
+      type: string
+    functional_requirements:
+      type: array
+      items:
+        type: object
+        required: [id, level, description]
+        properties:
+          id:
+            type: string
+            pattern: "^FR-\\d{3}$"
+          level:
+            type: string
+            enum: [SHALL, MUST, SHOULD, MAY]
+          description:
+            type: string
+          rationale:
+            type: string
+    non_functional_requirements:
+      type: array
+      items:
+        type: object
+        required: [id, category, description]
+        properties:
+          id:
+            type: string
+            pattern: "^NFR-\\d{3}$"
+          category:
+            type: string
+            enum: [performance, security, accessibility, scalability, reliability, maintainability]
+          description:
+            type: string
+          measurable_target:
+            type: string
+    gherkin_scenarios:
+      type: array
+      items:
+        type: object
+        required: [scenario_id, title, type, given, when, then]
+        properties:
+          scenario_id:
+            type: string
+          title:
+            type: string
+          type:
+            type: string
+            enum: [happy_path, edge_case, error_path]
+          given:
+            type: array
+            items:
+              type: string
+          when:
+            type: array
+            items:
+              type: string
+          then:
+            type: array
+            items:
+              type: string
+    acceptance_criteria:
+      type: array
+      items:
+        type: object
+        required: [id, criterion, maps_to]
+        properties:
+          id:
+            type: string
+          criterion:
+            type: string
+          maps_to:
+            type: array
+            items:
+              type: string
+            description: "FR / NFR IDs this criterion validates"
+    out_of_scope:
+      type: array
+      items:
+        type: string
+    open_questions:
+      type: array
+      items:
+        type: object
+        required: [question, owner, deadline]
+        properties:
+          question:
+            type: string
+          owner:
+            type: string
+          deadline:
+            type: string
+            format: date
+
+parameters:
+  feature_request:
+    type: string
+    required: true
+    description: "Raw feature request text from stakeholder or ticket"
+  target_users:
+    type: string
+    required: true
+    description: "Persona or user segment (e.g. 'enterprise admin', 'end consumer')"
+  business_context:
+    type: string
+    required: true
+    description: "Why this feature matters; OKR or metric it affects"
+  priority:
+    type: string
+    required: true
+    enum: [P0, P1, P2, P3]
+    description: "P0 = critical / blocking, P3 = nice-to-have"
+  constraints:
+    type: string
+    required: false
+    default: "None specified"
+    description: "Technical, legal, or resource constraints"
+
+tags:
+  - requirements
+  - specification
+  - gherkin
+  - product-management
+  - rfc2119
+
+model_hints:
+  preferred_models: [claude-opus-4-7, claude-sonnet-4-6]
+  temperature: 0.2
+  max_tokens: 4096

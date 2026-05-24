@@ -1,0 +1,361 @@
+# =============================================================================
+# URL Shortener — Implementation Plan
+# Generated via: prompts/architect.yaml v1.0.0
+# Spec reference: specs/url-shortener.yaml (SPEC-20260524-001)
+# =============================================================================
+
+plan_id: ARCH-20260524-001
+spec_id: SPEC-20260524-001
+generated_by: architect v1.0.0
+status: approved
+created_at: "2026-05-24"
+
+# =============================================================================
+# ARCHITECTURE STYLE
+# =============================================================================
+
+architecture_style:
+  name: Layered Monolith with Cache-Aside
+  justification: >
+    Team size (3 BE + 1 FE) and P1 priority favour a single deployable unit
+    over microservices operational overhead. Redis cache-aside pattern satisfies
+    NFR-001 (p99 ≤ 50 ms redirect) without distributed-tracing complexity.
+    Clean layer boundaries (routers → services → data) allow extraction to
+    microservices if traffic warrants it post-launch.
+  diagram_description: >
+    Client → CDN/Edge → FastAPI App (Auth MW → Rate-Limit MW → Routers →
+    Services) → Redis Cache (hot-path reads) + PostgreSQL (source of truth).
+    Analytics writes go through an async task queue (background tasks) so they
+    never block the redirect response.
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+
+components:
+
+  - id: COMP-01
+    name: FastAPI Application
+    responsibility: >
+      Hosts all HTTP endpoints, wires middleware (auth, rate-limit),
+      manages startup/shutdown lifecycle (DB pool, Redis connection).
+    technology: "Python 3.12, FastAPI 0.115, Uvicorn"
+    deployment_unit: Docker container (single replica in v1, HPA in v2)
+    depends_on: [COMP-02, COMP-03]
+
+  - id: COMP-02
+    name: PostgreSQL Database
+    responsibility: >
+      Source of truth for URLS, CLICKS, USERS, AUDIT_LOG,
+      RATE_LIMIT_WINDOWS. Handles soft-delete, expiry timestamps.
+    technology: "PostgreSQL 16, SQLAlchemy 2.0 (async), asyncpg"
+    deployment_unit: Managed RDS / Cloud SQL instance
+    depends_on: []
+
+  - id: COMP-03
+    name: Redis Cache
+    responsibility: >
+      Cache-aside for the redirect hot path (GET /{shortCode}).
+      Also stores sliding-window rate-limit counters (FR-004).
+      Target cache-hit rate ≥ 95% (NFR-006).
+    technology: "Redis 7, redis-py asyncio client"
+    deployment_unit: Managed Elasticache / Cloud Memorystore
+    depends_on: []
+
+  - id: COMP-04
+    name: URL Validator
+    responsibility: >
+      Stateless service that validates scheme (http/https) and blocks
+      SSRF targets (RFC 1918, link-local, loopback). REQ: FR-003, NFR-003.
+    technology: Python stdlib (ipaddress, urllib.parse)
+    deployment_unit: In-process module (COMP-01)
+    depends_on: []
+
+  - id: COMP-05
+    name: Rate Limiter Middleware
+    responsibility: >
+      Sliding-window rate limiter backed by Redis. 100 req/min per API key.
+      Returns 429 + Retry-After on breach. REQ: FR-004, NFR-004.
+    technology: FastAPI Middleware, Redis INCR + EXPIRE
+    deployment_unit: In-process module (COMP-01)
+    depends_on: [COMP-03]
+
+  - id: COMP-06
+    name: Analytics Worker
+    responsibility: >
+      Async background task that records each redirect click: hashes IP
+      (SHA-256 + salt), resolves country code, writes CLICKS row.
+      REQ: FR-008, NFR-005.
+    technology: FastAPI BackgroundTasks, Python hashlib
+    deployment_unit: In-process background task (COMP-01)
+    depends_on: [COMP-02]
+
+  - id: COMP-07
+    name: Schema Runner
+    responsibility: >
+      Demonstrates schema-enforced Claude API interaction. Calls Anthropic
+      SDK with inline JSON schema via tool_use, validates response, saves
+      output. REQ: Part 3.3.
+    technology: "Python, anthropic SDK, jsonschema"
+    deployment_unit: Standalone CLI script (schema_runner/)
+    depends_on: []
+
+# =============================================================================
+# INTERFACES
+# =============================================================================
+
+interfaces:
+
+  - id: IF-01
+    from_component: COMP-01
+    to_component: COMP-02
+    protocol: SQL over TCP (asyncpg)
+    schema_summary:
+      request: "SQLAlchemy Core / ORM queries (parameterised)"
+      response: "Row objects / scalar results"
+    sla:
+      max_latency_ms: 50
+      error_budget_percent: 0.1
+
+  - id: IF-02
+    from_component: COMP-01
+    to_component: COMP-03
+    protocol: Redis RESP3 (hiredis)
+    schema_summary:
+      get: "GET <shortCode> → longUrl string | nil"
+      set: "SET <shortCode> <longUrl> EX <ttl>"
+      del: "DEL <shortCode>"
+      incr: "INCR <bucket_key>; EXPIRE <bucket_key> 60"
+    sla:
+      max_latency_ms: 5
+      error_budget_percent: 0.01
+
+  - id: IF-03
+    from_component: Client
+    to_component: COMP-01
+    protocol: HTTPS REST (JSON)
+    schema_summary:
+      create: "POST /api/v1/urls → 201 UrlResponse"
+      redirect: "GET /{shortCode} → 302 Location header"
+      get: "GET /api/v1/urls/{shortCode} → 200 UrlResponse"
+      delete: "DELETE /api/v1/urls/{shortCode} → 204"
+      stats: "GET /api/v1/urls/{shortCode}/stats → 200 StatsResponse"
+    sla:
+      max_latency_ms: 50
+      error_budget_percent: 0.1
+
+# =============================================================================
+# DATA MODELS  (summary — full schema in specs/diagrams/er-data-model.md)
+# =============================================================================
+
+data_models:
+
+  - name: urls
+    store_type: relational
+    fields:
+      - { name: id,            type: uuid,         constraints: [PK, DEFAULT gen_random_uuid()] }
+      - { name: user_id,       type: uuid,         constraints: [FK→users.id, NOT NULL] }
+      - { name: long_url,      type: text,         constraints: [NOT NULL, CHECK length ≤ 2048] }
+      - { name: short_code,    type: varchar(32),  constraints: [UNIQUE, NOT NULL] }
+      - { name: custom_alias,  type: varchar(32),  constraints: [NULLABLE] }
+      - { name: is_active,     type: boolean,      constraints: [DEFAULT true, NOT NULL] }
+      - { name: expires_at,    type: timestamptz,  constraints: [NULLABLE] }
+      - { name: created_at,    type: timestamptz,  constraints: [DEFAULT now(), NOT NULL] }
+      - { name: updated_at,    type: timestamptz,  constraints: [DEFAULT now(), NOT NULL] }
+      - { name: deleted_at,    type: timestamptz,  constraints: [NULLABLE] }
+    indexes:
+      - { name: idx_urls_short_code,       fields: [short_code],              type: btree }
+      - { name: idx_urls_user_id_created,  fields: [user_id, created_at],     type: btree }
+      - { name: idx_urls_expires_active,   fields: [expires_at, is_active],   type: partial }
+
+  - name: clicks
+    store_type: relational
+    fields:
+      - { name: id,           type: uuid,        constraints: [PK] }
+      - { name: url_id,       type: uuid,        constraints: [FK→urls.id, NOT NULL] }
+      - { name: ip_hash,      type: varchar(64), constraints: [NOT NULL] }
+      - { name: user_agent,   type: varchar(512),constraints: [NULLABLE] }
+      - { name: referer,      type: varchar(512),constraints: [NULLABLE] }
+      - { name: country_code, type: char(2),     constraints: [NULLABLE] }
+      - { name: clicked_at,   type: timestamptz, constraints: [NOT NULL, DEFAULT now()] }
+    indexes:
+      - { name: idx_clicks_url_id_ts,  fields: [url_id, clicked_at], type: btree }
+    migration_note: "Range-partition by clicked_at (monthly) before 50 M rows"
+
+# =============================================================================
+# BUILD SEQUENCE
+# =============================================================================
+
+build_sequence:
+
+  - phase: 1
+    name: "Data Layer"
+    deliverables:
+      - "src/config.py — Settings (DATABASE_URL, REDIS_URL, BASE_URL, RATE_LIMIT_*)"
+      - "src/models.py — SQLAlchemy ORM models (User, URL, Click, AuditLog)"
+      - "src/database.py — Async engine, session factory, get_db dependency"
+      - "src/cache.py — Redis async wrapper (get, set, delete, incr)"
+    team_hint: Backend engineer 1
+    exit_criteria: "DB models create tables via create_all(); Redis ping succeeds in integration test"
+    estimated_days: 1
+    spec_refs: [FR-001, FR-005, FR-006, NFR-006]
+
+  - phase: 2
+    name: "Core Domain Services"
+    deliverables:
+      - "src/utils/codegen.py — NanoID short-code generator (8-char, 62-char alphabet)"
+      - "src/utils/crypto.py — IP hashing (SHA-256 + per-tenant salt)"
+      - "src/services/validator.py — URL scheme + SSRF validation"
+      - "src/schemas.py — Pydantic v2 request/response models"
+      - "src/services/url_service.py — create_url, resolve_url, delete_url, get_url"
+    team_hint: Backend engineer 2
+    exit_criteria: >
+      Unit tests pass: valid URL → code generated; SSRF URL → ValidationError raised;
+      expired URL → None or raises ExpiredError
+    estimated_days: 2
+    spec_refs: [FR-001, FR-002, FR-003, FR-006, FR-007, FR-009, NFR-003]
+
+  - phase: 3
+    name: "API Layer + Security Middleware"
+    deliverables:
+      - "src/middleware/auth.py — APIKeyHeader dependency, 401 on invalid key"
+      - "src/middleware/rate_limiter.py — Redis sliding-window, 429 + Retry-After"
+      - "src/routers/urls.py — POST /urls, GET /urls/{code}, DELETE /urls/{code}"
+      - "src/routers/redirect.py — GET /{shortCode} cache-first"
+      - "src/routers/health.py — GET /health"
+      - "src/main.py — App factory, lifespan, router registration"
+    team_hint: Backend engineer 1 + 2
+    exit_criteria: >
+      Integration tests: SC-001 through SC-010 pass;
+      rate-limit test hits 429 on 101st request;
+      redirect serves 302 in < 100 ms on cached path
+    estimated_days: 2
+    spec_refs: [FR-001, FR-002, FR-004, FR-005, FR-006, FR-007, NFR-001, NFR-004, SC-001..SC-010]
+
+  - phase: 4
+    name: "Analytics + Stats Endpoint"
+    deliverables:
+      - "src/services/analytics_service.py — record_click (async background), get_stats"
+      - "src/routers/stats.py — GET /urls/{code}/stats (owner-only)"
+    team_hint: Backend engineer 3
+    exit_criteria: "Click event recorded after redirect; stats endpoint returns correct counts; no raw IPs in DB"
+    estimated_days: 1
+    spec_refs: [FR-008, NFR-005, AC-009]
+
+  - phase: 5
+    name: "Schema Runner + Self-Critique Loop"
+    deliverables:
+      - "schema_runner/schema_runner.py — Claude API call with inline JSON schema"
+      - "schema_runner/output_schema.json — documented schema"
+      - "schema_runner/validated_output.json — Claude's validated response"
+      - "reviews/initial-code-review.json — code-reviewer.yaml output (pre-fix)"
+      - "reviews/post-fix-review.json — clean review after fixes applied"
+    team_hint: Backend engineer 2
+    exit_criteria: "schema_runner.py runs without error; validated_output.json passes jsonschema validation"
+    estimated_days: 1
+    spec_refs: [NFR-003, NFR-005, AC-004]
+
+# =============================================================================
+# RISK REGISTER
+# =============================================================================
+
+risk_register:
+
+  - risk: "Short-code collision under high write volume"
+    likelihood: M
+    impact: H
+    mitigation: >
+      Use 8-char NanoID (62^8 ≈ 218 trillion combos). Add DB UNIQUE constraint
+      with retry loop (max 3 attempts) on INSERT conflict before surfacing error.
+
+  - risk: "Redis unavailability blocks redirect hot path"
+    likelihood: L
+    impact: H
+    mitigation: >
+      Treat Redis as a best-effort cache. On connection error, fall through to
+      DB read. Log cache miss spike as alert. Never raise 5xx because Redis is down.
+
+  - risk: "SSRF bypass via DNS rebinding or redirect chains"
+    likelihood: M
+    impact: H
+    mitigation: >
+      Block private-range IPs at URL submission time (not at redirect time).
+      Do not follow redirects during validation. Document as known limitation
+      and add to NFR-003 open questions.
+
+  - risk: "GDPR non-compliance if raw IPs leak into logs"
+    likelihood: M
+    impact: H
+    mitigation: >
+      Hash IPs in analytics_service before any DB write. Add test AC-009
+      that asserts no raw IPs appear in CLICKS table. Exclude raw IPs from
+      structured logs via log filter.
+
+  - risk: "p99 redirect latency exceeds 50 ms under 10 k RPS"
+    likelihood: M
+    impact: M
+    mitigation: >
+      Cache warm-up on URL creation (write-through). Monitor cache-hit rate;
+      alert at < 90%. Add hiredis C extension for 3× Redis client throughput.
+      Load test with k6 before GA.
+
+# =============================================================================
+# ARCHITECTURE DECISION RECORDS
+# =============================================================================
+
+adrs:
+
+  - title: "ADR-01: 302 over 301 for redirects"
+    status: accepted
+    context: >
+      301 (Permanent Redirect) is cached by browsers, eliminating repeat server
+      hits and improving latency. However, it prevents click analytics from working
+      after the first visit and makes URL updates invisible to cached browsers.
+    decision: >
+      Use 302 (Found / Temporary Redirect). Every redirect hits the service,
+      enabling analytics and allowing long-URL updates. Cache-Control: no-store
+      prevents browser caching.
+    consequences: >
+      Higher server load per unique visitor. Mitigated by Redis cache-aside
+      (DB not hit on cache-resident codes). Open question SC-002 to revisit
+      if analytics requirement is dropped.
+
+  - title: "ADR-02: Soft delete over hard delete"
+    status: accepted
+    context: >
+      FR-005 requires DELETE to make GET /{shortCode} return 404. Options:
+      (a) hard-delete the row, (b) set deleted_at timestamp.
+    decision: >
+      Soft delete (set deleted_at). Row retained for audit log integrity,
+      analytics history, and the 30-day short-code reuse freeze (state diagram).
+    consequences: >
+      Need to filter deleted_at IS NULL in all active-URL queries.
+      Scheduled purge job required after 90-day retention window.
+
+  - title: "ADR-03: In-process async background tasks for click recording"
+    status: accepted
+    context: >
+      Click recording must not block the redirect response (NFR-001: p99 ≤ 50 ms).
+      Options: (a) FastAPI BackgroundTasks, (b) message queue (Kafka/SQS),
+      (c) fire-and-forget asyncio task.
+    decision: >
+      FastAPI BackgroundTasks for v1. Zero additional infrastructure.
+      Acceptable data-loss risk (worker crash loses in-flight events)
+      is acceptable at current scale.
+    consequences: >
+      Some click events may be lost on process restart. Acceptable for v1.
+      Migrate to Kafka if loss rate > 0.1% or volume > 1 M clicks/day.
+
+  - title: "ADR-04: NanoID 8-char for short code generation"
+    status: accepted
+    context: >
+      Need short, URL-safe, collision-resistant codes. Options:
+      (a) Sequential integer (predictable, IDOR risk), (b) UUID (too long),
+      (c) NanoID/custom random (configurable length).
+    decision: >
+      Custom 8-char generator using secrets.choice over 62-char alphabet
+      (a-z A-Z 0-9). 62^8 ≈ 218 T combinations. Retry on DB unique constraint
+      violation (expected frequency < 1 in 10^9 at 1 M URLs).
+    consequences: >
+      No sequential guessing (A01 IDOR mitigation). Short enough for
+      sharing. Length configurable via SHORT_CODE_LENGTH env var.

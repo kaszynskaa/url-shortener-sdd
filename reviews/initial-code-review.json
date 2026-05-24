@@ -1,0 +1,170 @@
+{
+  "review_id": "SEC-20260524-001",
+  "_meta": {
+    "prompt_used": "prompts/code-reviewer.yaml v1.0.0",
+    "reviewed_files": [
+      "src/services/validator.py (v0 — pre-fix)",
+      "src/services/url_service.py (v0 — pre-fix)",
+      "src/middleware/rate_limiter.py (v0 — pre-fix)"
+    ],
+    "review_stage": "initial — BEFORE self-critique fixes",
+    "language": "Python",
+    "framework": "FastAPI"
+  },
+  "summary": {
+    "language": "Python",
+    "framework": "FastAPI 0.115",
+    "total_findings": 5,
+    "critical": 0,
+    "high": 2,
+    "medium": 2,
+    "low": 1,
+    "info": 0,
+    "overall_risk": "high",
+    "suppressed_count": 0
+  },
+  "findings": [
+    {
+      "id": "FIND-001",
+      "owasp_category": "A10",
+      "cwe_id": "CWE-918",
+      "title": "Incomplete SSRF blocklist — missing IPv6, CGNAT, and link-local ranges",
+      "severity": "high",
+      "score": 8.2,
+      "evidence": {
+        "snippet": "_BLOCKED_NETWORKS = [\n    ipaddress.ip_network('10.0.0.0/8'),\n    ipaddress.ip_network('172.16.0.0/12'),\n    ipaddress.ip_network('192.168.0.0/16'),\n    ipaddress.ip_network('127.0.0.0/8'),\n]",
+        "line_start": 22,
+        "line_end": 27,
+        "file": "src/services/validator.py"
+      },
+      "location": "src/services/validator.py:22-27",
+      "description": "The initial SSRF blocklist covered only four IPv4 ranges. An attacker could bypass it by submitting URLs targeting 169.254.169.254 (AWS metadata — link-local), 100.64.x.x (CGNAT shared address space), IPv6 loopback (::1), ULA ranges (fc00::/7), or link-local IPv6 (fe80::/10). All of these resolve to addresses that can reach internal services.",
+      "attack_scenario": "Attacker submits http://169.254.169.254/latest/meta-data/iam/security-credentials/ — the AWS EC2 metadata endpoint. Because 169.254.0.0/16 was not in the initial blocklist, the URL passes validation and is shortened. When the service owner (or anyone with the short link) later visits it, the redirect exposes IAM credentials.",
+      "remediation": {
+        "summary": "Extend _BLOCKED_NETWORKS to cover all private/reserved ranges including link-local, CGNAT, IPv6 loopback, ULA, and IPv4-mapped IPv6.",
+        "code_fix": "_BLOCKED_NETWORKS = [\n    # IPv4\n    ipaddress.ip_network('10.0.0.0/8'),\n    ipaddress.ip_network('172.16.0.0/12'),\n    ipaddress.ip_network('192.168.0.0/16'),\n    ipaddress.ip_network('127.0.0.0/8'),\n    ipaddress.ip_network('169.254.0.0/16'),   # link-local\n    ipaddress.ip_network('100.64.0.0/10'),    # CGNAT RFC 6598\n    ipaddress.ip_network('192.0.2.0/24'),     # TEST-NET-1\n    ipaddress.ip_network('198.51.100.0/24'),  # TEST-NET-2\n    ipaddress.ip_network('203.0.113.0/24'),   # TEST-NET-3\n    ipaddress.ip_network('0.0.0.0/8'),\n    # IPv6\n    ipaddress.ip_network('::1/128'),\n    ipaddress.ip_network('fc00::/7'),\n    ipaddress.ip_network('fe80::/10'),\n    ipaddress.ip_network('::ffff:0:0/96'),\n]",
+        "references": [
+          "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/",
+          "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+          "https://www.rfc-editor.org/rfc/rfc6598"
+        ]
+      },
+      "suppressed": false
+    },
+    {
+      "id": "FIND-002",
+      "owasp_category": "A01",
+      "cwe_id": "CWE-639",
+      "title": "Missing ownership check in delete_url — IDOR vulnerability",
+      "severity": "high",
+      "score": 8.8,
+      "evidence": {
+        "snippet": "async def delete_url(db, short_code):\n    url_obj = await db.scalar(select(URL).where(URL.short_code == short_code))\n    if url_obj is None:\n        return False\n    url_obj.deleted_at = datetime.now(timezone.utc)\n    await db.flush()",
+        "line_start": 120,
+        "line_end": 128,
+        "file": "src/services/url_service.py (v0)"
+      },
+      "location": "src/services/url_service.py:120-128",
+      "description": "The initial delete_url function accepted only a short_code — no requesting_user_id parameter. Any authenticated user could delete any other user's short URL by knowing or guessing the short code, constituting an Insecure Direct Object Reference (IDOR / A01 Broken Access Control) vulnerability.",
+      "attack_scenario": "Attacker authenticates with a valid API key. Attacker guesses or discovers the short code of a competitor's campaign link (e.g., by enumerating or brute-forcing the 8-char space). Attacker calls DELETE /api/v1/urls/{competitor_code} and the link is soft-deleted. Competitor's campaign links are now broken — denial of service against other users' data.",
+      "remediation": {
+        "summary": "Add requesting_user_id parameter and verify url_obj.user_id == requesting_user_id before deleting. Raise PermissionError('FORBIDDEN') on mismatch.",
+        "code_fix": "async def delete_url(\n    db: AsyncSession,\n    short_code: str,\n    requesting_user_id: uuid.UUID,  # NEW\n) -> bool:\n    url_obj = await db.scalar(\n        select(URL).where(URL.short_code == short_code, URL.deleted_at.is_(None))\n    )\n    if url_obj is None:\n        return False\n    # OWNERSHIP GUARD — fixes FIND-002\n    if url_obj.user_id != requesting_user_id:\n        raise PermissionError('FORBIDDEN')\n    url_obj.deleted_at = datetime.now(timezone.utc)\n    url_obj.is_active = False\n    await db.flush()\n    await cache_delete(short_code)\n    return True",
+        "references": [
+          "https://owasp.org/Top10/A01_2021-Broken_Access_Control/",
+          "https://cwe.mitre.org/data/definitions/639.html"
+        ]
+      },
+      "suppressed": false
+    },
+    {
+      "id": "FIND-003",
+      "owasp_category": "A04",
+      "cwe_id": "CWE-20",
+      "title": "ISO 8601 ttl field silently ignored — insecure design (no expiry set when expected)",
+      "severity": "medium",
+      "score": 5.1,
+      "evidence": {
+        "snippet": "# expiresAt from request only; ttl field not parsed\nexpires_at: datetime | None = request.expires_at",
+        "line_start": 78,
+        "line_end": 79,
+        "file": "src/services/url_service.py (v0)"
+      },
+      "location": "src/services/url_service.py:78-79",
+      "description": "FR-009 allows callers to provide a ttl field (ISO 8601 duration string, e.g. 'P30D') as an alternative to an absolute expiresAt timestamp. The initial implementation read request.expires_at but never parsed request.ttl, so a caller supplying only ttl='P30D' would receive a URL with no expiry — violating their intent and potentially exposing links longer than expected.",
+      "attack_scenario": "A marketing team creates short URLs for a 30-day campaign using ttl='P30D'. The initial implementation ignores the ttl field; URLs never expire. After the campaign, the links remain active indefinitely, potentially redirecting to stale or compromised landing pages.",
+      "remediation": {
+        "summary": "Add _parse_ttl() helper that converts ISO 8601 duration strings to timedelta, and apply it when request.ttl is set and request.expires_at is None.",
+        "code_fix": "def _parse_ttl(ttl_str: str) -> timedelta:\n    import re\n    patterns = [\n        (r'^P(\\d+)W$', lambda m: timedelta(weeks=int(m.group(1)))),\n        (r'^P(\\d+)D$', lambda m: timedelta(days=int(m.group(1)))),\n        (r'^PT(\\d+)H$', lambda m: timedelta(hours=int(m.group(1)))),\n    ]\n    for pattern, builder in patterns:\n        m = re.match(pattern, ttl_str.upper())\n        if m:\n            return builder(m)\n    raise ValueError(f'Unsupported ISO 8601 duration: {ttl_str!r}')\n\n# In create_url:\nexpires_at = request.expires_at\nif request.ttl and expires_at is None:\n    delta = _parse_ttl(request.ttl)\n    expires_at = datetime.now(timezone.utc) + delta",
+        "references": [
+          "https://owasp.org/Top10/A04_2021-Insecure_Design/",
+          "https://www.iso.org/iso-8601-date-and-time-format.html"
+        ]
+      },
+      "suppressed": false
+    },
+    {
+      "id": "FIND-004",
+      "owasp_category": "A04",
+      "cwe_id": "CWE-770",
+      "title": "Rate limiter uses global bucket — one user can exhaust all others' quota",
+      "severity": "medium",
+      "score": 5.8,
+      "evidence": {
+        "snippet": "bucket_key = f'rl:{window_start}'  # v0: no user_id in key",
+        "line_start": 45,
+        "line_end": 45,
+        "file": "src/middleware/rate_limiter.py (v0)"
+      },
+      "location": "src/middleware/rate_limiter.py:45",
+      "description": "The initial rate limiter bucket key was 'rl:{window_start}' — shared across all authenticated users. A single API client could submit 100 requests and exhaust the global limit for the entire window, denying service to all other users. This violates the intent of per-API-key rate limiting in FR-004.",
+      "attack_scenario": "A single attacker API key sends 100 POST /api/v1/urls requests rapidly, filling the global bucket. All other API clients receive 429 Too Many Requests for the remainder of the 60-second window, even if they haven't made a single request.",
+      "remediation": {
+        "summary": "Scope the bucket key to user_id: f'rl:{current_user.id}:{window_start}'",
+        "code_fix": "# Fix: include user_id in bucket key\nwindow_start = int(time.time()) // window * window\nbucket_key = f'rl:{current_user.id}:{window_start}'  # per-user isolation",
+        "references": [
+          "https://owasp.org/Top10/A04_2021-Insecure_Design/",
+          "https://cloud.google.com/architecture/rate-limiting-strategies-techniques"
+        ]
+      },
+      "suppressed": false
+    },
+    {
+      "id": "FIND-005",
+      "owasp_category": "A09",
+      "cwe_id": "CWE-778",
+      "title": "SSRF blocking events not written to audit log",
+      "severity": "low",
+      "score": 3.2,
+      "evidence": {
+        "snippet": "if _is_private_ip(hostname):\n    raise URLValidationError(\n        code='SSRF_BLOCKED',\n        detail='...',\n    )\n# No audit log write before raising",
+        "line_start": 95,
+        "line_end": 100,
+        "file": "src/services/validator.py (v0)"
+      },
+      "location": "src/services/validator.py:95-100",
+      "description": "NFR-003 specifies that SSRF_BLOCKED events must be logged to the security audit log. The initial validator raised the error without writing an AuditLog record. Security teams would have no visibility into SSRF attempt patterns or attacker IPs.",
+      "attack_scenario": "A threat actor probes the API with hundreds of SSRF payloads to map internal infrastructure. No audit records are created; the security team sees no alerts and cannot detect the reconnaissance.",
+      "remediation": {
+        "summary": "Write an AuditLog entry (event_type='SSRF_BLOCKED') in the router layer after catching URLValidationError with code SSRF_BLOCKED. Keep validator pure (no DB access); audit write belongs in the router/service.",
+        "code_fix": "# In urls.py router, after catching URLValidationError:\nif exc.code == 'SSRF_BLOCKED':\n    audit = AuditLog(\n        user_id=current_user.id,\n        event_type='SSRF_BLOCKED',\n        client_ip=request.client.host,\n    )\n    db.add(audit)\n    # commit happens in get_db()",
+        "references": [
+          "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/",
+          "https://cwe.mitre.org/data/definitions/778.html"
+        ]
+      },
+      "suppressed": false
+    }
+  ],
+  "metrics": {
+    "lines_reviewed": 312,
+    "review_coverage": "src/services/validator.py, src/services/url_service.py (v0), src/middleware/rate_limiter.py (v0)",
+    "false_positive_risk": "low"
+  },
+  "recommendation": {
+    "merge_decision": "request_changes",
+    "rationale": "Two high-severity findings (FIND-001 SSRF bypass, FIND-002 IDOR on delete) must be fixed before merge. Both are exploitable with a valid API key.",
+    "required_fixes": ["FIND-001", "FIND-002"],
+    "suggested_fixes": ["FIND-003", "FIND-004", "FIND-005"]
+  }
+}

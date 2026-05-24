@@ -1,0 +1,85 @@
+{
+  "review_id": "SEC-20260524-002",
+  "_meta": {
+    "prompt_used": "prompts/code-reviewer.yaml v1.0.0",
+    "reviewed_files": [
+      "src/services/validator.py (post-fix)",
+      "src/services/url_service.py (post-fix)",
+      "src/middleware/rate_limiter.py (post-fix)"
+    ],
+    "review_stage": "post-fix — AFTER self-critique fixes applied",
+    "prior_review": "reviews/initial-code-review.json (SEC-20260524-001)",
+    "language": "Python",
+    "framework": "FastAPI"
+  },
+  "summary": {
+    "language": "Python",
+    "framework": "FastAPI 0.115",
+    "total_findings": 1,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 1,
+    "overall_risk": "low",
+    "suppressed_count": 0
+  },
+  "findings": [
+    {
+      "id": "FIND-P01",
+      "owasp_category": "A09",
+      "cwe_id": "CWE-778",
+      "title": "SSRF audit log write deferred to future phase (FIND-005 partial)",
+      "severity": "info",
+      "score": 0.5,
+      "evidence": {
+        "snippet": "# In urls.py — SSRF_BLOCKED audit log write is in Phase 4 backlog\n# Current: error returned to caller; security event not yet persisted",
+        "line_start": 60,
+        "line_end": 75,
+        "file": "src/routers/urls.py"
+      },
+      "location": "src/routers/urls.py:60-75",
+      "description": "FIND-005 (SSRF events not audit-logged) from the initial review was flagged as 'suggested' (not blocking). The router now surfaces SSRF_BLOCKED to the caller with the correct 422 response, but the AuditLog DB write is deferred to Phase 4 of the build sequence. This is acceptable for the current phase given no sensitive data is lost — the event is visible in application logs.",
+      "attack_scenario": "Low risk at current phase: SSRF attempts are correctly rejected and surfaced in structured application logs. The missing AuditLog DB row means security dashboards won't aggregate this event type until Phase 4.",
+      "remediation": {
+        "summary": "Track as Phase 4 backlog item. Add AuditLog write in the urls.py exception handler when exc.code == 'SSRF_BLOCKED'. See FIND-005 remediation in initial-code-review.json.",
+        "code_fix": "# Phase 4 TODO in src/routers/urls.py:\n# from src.models import AuditLog\n# if hasattr(exc, 'code') and exc.code == 'SSRF_BLOCKED':\n#     db.add(AuditLog(user_id=current_user.id, event_type='SSRF_BLOCKED', client_ip=...))\n#     await db.flush()",
+        "references": []
+      },
+      "suppressed": false
+    }
+  ],
+  "fixes_verified": [
+    {
+      "finding_id": "FIND-001",
+      "status": "fixed",
+      "verification": "validator.py _BLOCKED_NETWORKS now contains 14 entries covering RFC 1918, loopback, 169.254.0.0/16 (link-local), 100.64.0.0/10 (CGNAT), TEST-NET ranges, and IPv6 ::1/128, fc00::/7, fe80::/10, ::ffff:0:0/96. test_validator.py parametrize covers all ranges including the previously missing 169.254.169.254 AWS metadata endpoint."
+    },
+    {
+      "finding_id": "FIND-002",
+      "status": "fixed",
+      "verification": "delete_url now accepts requesting_user_id: uuid.UUID parameter. Line 'if url_obj.user_id != requesting_user_id: raise PermissionError(\"FORBIDDEN\")' added before soft-delete. test_url_service.py::TestDeleteUrl::test_non_owner_cannot_delete asserts PermissionError is raised. Router maps PermissionError to HTTP 403."
+    },
+    {
+      "finding_id": "FIND-003",
+      "status": "fixed",
+      "verification": "_parse_ttl() helper implemented, handles P{n}D, P{n}W, PT{n}H, PT{n}M patterns. create_url applies it when request.ttl is set and expires_at is None. test_url_service.py::TestCreateUrl::test_create_url_with_ttl_string verifies P30D → ~30 day expiry with ±1 day tolerance."
+    },
+    {
+      "finding_id": "FIND-004",
+      "status": "fixed",
+      "verification": "rate_limiter.py bucket_key is now f'rl:{current_user.id}:{window_start}' — per-user isolation confirmed. test_routers.py::TestCreateUrl::test_rate_limit_exceeded_returns_429 mocks cache_incr to return 101 and asserts 429 + Retry-After header."
+    }
+  ],
+  "metrics": {
+    "lines_reviewed": 412,
+    "review_coverage": "full post-fix implementation",
+    "false_positive_risk": "low"
+  },
+  "recommendation": {
+    "merge_decision": "approve_with_comments",
+    "rationale": "All blocking findings (FIND-001, FIND-002) and suggested findings (FIND-003, FIND-004) resolved. One info-level item (FIND-P01 / audit log) deferred to Phase 4. Safe to merge to main with Phase 4 ticket open.",
+    "required_fixes": [],
+    "suggested_fixes": ["FIND-P01 — add SSRF_BLOCKED audit log write in Phase 4"]
+  }
+}

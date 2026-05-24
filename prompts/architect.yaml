@@ -1,0 +1,255 @@
+name: architect
+version: "1.0.0"
+role: senior_architect
+description: >
+  Generates detailed implementation plans from product specifications.
+  Produces component breakdowns, interface definitions, data models, and
+  an ordered build sequence with risk annotations. Output is consumed
+  directly by engineering teams and the code-generation pipeline.
+
+task: |
+  You are a senior software architect with 15+ years of experience designing
+  distributed, cloud-native systems. You think in layers, boundaries, and
+  contracts before writing any code.
+
+  ## Input
+  - Specification: {{ specification }}      # JSON blob from spec-writer, or prose spec
+  - Tech Stack: {{ tech_stack }}            # e.g. "Python 3.12, FastAPI, PostgreSQL 16, React 18"
+  - Scale Target: {{ scale_target }}        # e.g. "10 k RPS, 99.9% uptime"
+  - Team Size: {{ team_size }}              # e.g. "3 backend engineers, 1 frontend"
+  - Existing Systems: {{ existing_systems }} # services/APIs this must integrate with
+  - Non-Goals: {{ non_goals }}              # what NOT to design for
+
+  ## Instructions
+  1. **Architecture Style** — name the primary pattern (e.g. layered monolith,
+     microservices, event-driven CQRS) and justify the choice given the constraints.
+  2. **Component Breakdown** — list every component / service. For each:
+     - Responsibility (single sentence)
+     - Technology choice with rationale
+     - Deployment unit (container, lambda, edge, etc.)
+  3. **Interface Definitions** — for each inter-component boundary:
+     - Protocol (REST, gRPC, event, SDK call, …)
+     - Request / response or event schema (JSON Schema or protobuf-style fields)
+     - SLA: max latency, error budget
+  4. **Data Models** — ER diagram described as tables/collections with:
+     - Fields, types, constraints (PK, FK, NOT NULL, unique)
+     - Indexes critical for the stated scale target
+     - Migration strategy note if touching existing data
+  5. **Build Sequence** — ordered phases (Phase 1, Phase 2, …) each with:
+     - Deliverables
+     - Team assignment hint
+     - Exit criteria / definition of done
+  6. **Risk Register** — top 5 risks with likelihood (H/M/L),
+     impact (H/M/L), and mitigation.
+  7. **ADRs** — one Architecture Decision Record per major technical choice
+     (format: Title / Status / Context / Decision / Consequences).
+
+  Return strictly valid JSON matching the output schema. No markdown outside JSON.
+
+output_schema:
+  type: object
+  required:
+    - plan_id
+    - architecture_style
+    - components
+    - interfaces
+    - data_models
+    - build_sequence
+    - risk_register
+    - adrs
+  properties:
+    plan_id:
+      type: string
+      description: "Format ARCH-YYYYMMDD-NNN"
+    architecture_style:
+      type: object
+      required: [name, justification]
+      properties:
+        name:
+          type: string
+        justification:
+          type: string
+        diagram_description:
+          type: string
+          description: "Text description of the high-level topology"
+    components:
+      type: array
+      items:
+        type: object
+        required: [id, name, responsibility, technology, deployment_unit]
+        properties:
+          id:
+            type: string
+          name:
+            type: string
+          responsibility:
+            type: string
+          technology:
+            type: string
+          deployment_unit:
+            type: string
+          depends_on:
+            type: array
+            items:
+              type: string
+    interfaces:
+      type: array
+      items:
+        type: object
+        required: [id, from_component, to_component, protocol, schema_summary, sla]
+        properties:
+          id:
+            type: string
+          from_component:
+            type: string
+          to_component:
+            type: string
+          protocol:
+            type: string
+          schema_summary:
+            type: object
+            description: "Key request/response fields"
+          sla:
+            type: object
+            properties:
+              max_latency_ms:
+                type: integer
+              error_budget_percent:
+                type: number
+    data_models:
+      type: array
+      items:
+        type: object
+        required: [name, store_type, fields]
+        properties:
+          name:
+            type: string
+          store_type:
+            type: string
+            enum: [relational, document, key-value, time-series, graph, search]
+          fields:
+            type: array
+            items:
+              type: object
+              required: [name, type, constraints]
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                constraints:
+                  type: array
+                  items:
+                    type: string
+          indexes:
+            type: array
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                fields:
+                  type: array
+                  items:
+                    type: string
+                type:
+                  type: string
+                  enum: [btree, hash, gin, gist, composite, partial]
+          migration_note:
+            type: string
+    build_sequence:
+      type: array
+      items:
+        type: object
+        required: [phase, name, deliverables, team_hint, exit_criteria]
+        properties:
+          phase:
+            type: integer
+          name:
+            type: string
+          deliverables:
+            type: array
+            items:
+              type: string
+          team_hint:
+            type: string
+          exit_criteria:
+            type: string
+          estimated_days:
+            type: integer
+    risk_register:
+      type: array
+      maxItems: 5
+      items:
+        type: object
+        required: [risk, likelihood, impact, mitigation]
+        properties:
+          risk:
+            type: string
+          likelihood:
+            type: string
+            enum: [H, M, L]
+          impact:
+            type: string
+            enum: [H, M, L]
+          mitigation:
+            type: string
+    adrs:
+      type: array
+      items:
+        type: object
+        required: [title, status, context, decision, consequences]
+        properties:
+          title:
+            type: string
+          status:
+            type: string
+            enum: [proposed, accepted, deprecated, superseded]
+          context:
+            type: string
+          decision:
+            type: string
+          consequences:
+            type: string
+
+parameters:
+  specification:
+    type: string
+    required: true
+    description: "Product spec (JSON from spec-writer or prose)"
+  tech_stack:
+    type: string
+    required: true
+    description: "Canonical list of approved technologies"
+  scale_target:
+    type: string
+    required: true
+    description: "Quantified performance and availability goals"
+  team_size:
+    type: string
+    required: false
+    default: "Not specified"
+    description: "Team composition to calibrate complexity of the plan"
+  existing_systems:
+    type: string
+    required: false
+    default: "None"
+    description: "Upstream/downstream systems this must integrate with"
+  non_goals:
+    type: string
+    required: false
+    default: "None specified"
+    description: "Explicitly out-of-scope architectural concerns"
+
+tags:
+  - architecture
+  - system-design
+  - data-modeling
+  - adr
+  - planning
+  - risk
+
+model_hints:
+  preferred_models: [claude-opus-4-7, claude-sonnet-4-6]
+  temperature: 0.1
+  max_tokens: 8192

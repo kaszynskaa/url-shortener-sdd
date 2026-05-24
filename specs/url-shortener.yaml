@@ -1,0 +1,812 @@
+# =============================================================================
+# URL Shortener Service — Product Specification
+# Generated via: prompts/spec-writer.yaml v1.0.0
+# =============================================================================
+
+spec_id: SPEC-20260524-001
+spec_version: "1.0.0"
+generated_by: spec-writer v1.0.0
+status: draft          # draft | review | approved | deprecated
+created_at: "2026-05-24"
+last_updated: "2026-05-24"
+
+input:
+  feature_request: >
+    We need a URL shortening service. Users paste a long URL and receive
+    a short, shareable link (e.g. sho.rt/aB3xY9). Clicking the short link
+    redirects to the original. Optional features: custom aliases, expiry dates,
+    and per-link click analytics.
+  target_users: "Developers (API), marketing teams (dashboard), anonymous public (redirect)"
+  business_context: >
+    Reduce link length in campaigns and social posts, measure campaign click-through
+    rates, and provide a branded sharing experience. Targeted OKR: increase marketing
+    CTR by 15% via trackable links within Q3.
+  priority: P1
+  constraints: >
+    GDPR-compliant (no PII in analytics without consent). Redirect latency
+    ≤ 50 ms p99. Must not enable SSRF or open-redirect abuse. Rate-limited API.
+
+# =============================================================================
+# 1. PROBLEM STATEMENT
+# =============================================================================
+
+problem_statement: >
+  Marketing and developer teams need a reliable, low-latency URL shortening
+  service with custom aliases, configurable expiry, and per-link click analytics
+  so they can share compact, brand-aligned links and measure engagement without
+  relying on third-party providers.
+
+# =============================================================================
+# 2. FUNCTIONAL REQUIREMENTS  (RFC 2119)
+# =============================================================================
+
+functional_requirements:
+
+  - id: FR-001
+    level: SHALL
+    description: >
+      The system SHALL accept an HTTP or HTTPS URL submitted via the REST API
+      and return a unique short code of 6–10 alphanumeric characters.
+    rationale: Core value proposition — shortening.
+
+  - id: FR-002
+    level: SHALL
+    description: >
+      The system SHALL respond to a GET request on the short-code path with an
+      HTTP 302 redirect to the original URL within 50 ms at p99.
+    rationale: Redirect performance is the primary user-facing SLA.
+
+  - id: FR-003
+    level: SHALL
+    description: >
+      The system SHALL validate that the submitted long URL is syntactically
+      valid (RFC 3986) and uses an http or https scheme before persisting it.
+    rationale: Prevent malformed or dangerous scheme URLs (javascript:, file:, etc.).
+
+  - id: FR-004
+    level: SHALL
+    description: >
+      The system SHALL enforce a per-API-key rate limit of 100 create requests
+      per minute and return HTTP 429 with a Retry-After header when exceeded.
+    rationale: Protect service availability and prevent abuse.
+
+  - id: FR-005
+    level: SHALL
+    description: >
+      The system SHALL allow an authenticated owner to delete their short URL,
+      after which the short code SHALL return HTTP 404.
+    rationale: Owners must retain control over their published links.
+
+  - id: FR-006
+    level: SHALL
+    description: >
+      The system SHALL return HTTP 410 Gone when a short code exists in the
+      database but its expiry timestamp has passed.
+    rationale: Expired links must surface a meaningful status, not silently redirect.
+
+  - id: FR-007
+    level: SHOULD
+    description: >
+      The system SHOULD allow the requesting user to supply a custom alias
+      (3–32 characters, alphanumeric + hyphen) instead of a generated code.
+      If the alias is already taken the API SHOULD return HTTP 409.
+    rationale: Branded links improve CTR and recognisability.
+
+  - id: FR-008
+    level: SHOULD
+    description: >
+      The system SHOULD record each redirect event (timestamp, hashed IP,
+      country code, referrer) and expose aggregate click statistics via a
+      dedicated stats endpoint.
+    rationale: Analytics is the secondary value driver after shortening.
+
+  - id: FR-009
+    level: SHOULD
+    description: >
+      The system SHOULD allow an optional TTL (time-to-live) expressed as an
+      ISO 8601 duration or absolute datetime when creating a short URL.
+    rationale: Marketing campaigns have defined end dates.
+
+  - id: FR-010
+    level: MAY
+    description: >
+      The system MAY return an existing short code when the same long URL is
+      submitted by the same user within the past 24 hours (deduplication).
+    rationale: Avoids polluting the namespace with duplicate entries.
+
+# =============================================================================
+# 3. NON-FUNCTIONAL REQUIREMENTS
+# =============================================================================
+
+non_functional_requirements:
+
+  - id: NFR-001
+    category: performance
+    description: >
+      Redirect responses (GET /{shortCode}) MUST be served within 50 ms at p99
+      and 20 ms at p50 under a sustained load of 10 000 RPS.
+    measurable_target: "p50 ≤ 20 ms, p99 ≤ 50 ms @ 10 k RPS (load test)"
+
+  - id: NFR-002
+    category: performance
+    description: >
+      URL creation (POST /api/v1/urls) MUST complete within 300 ms at p99.
+    measurable_target: "p99 ≤ 300 ms @ 500 RPS creation throughput"
+
+  - id: NFR-003
+    category: security
+    description: >
+      The system MUST sanitise all user-supplied URLs to prevent Server-Side
+      Request Forgery (SSRF). Internal RFC 1918 addresses and link-local ranges
+      MUST be rejected with HTTP 422.
+    measurable_target: "0 SSRF findings in DAST scan; blocklist covers 10.x, 172.16-31.x, 192.168.x, 169.254.x, ::1"
+
+  - id: NFR-004
+    category: security
+    description: >
+      All API endpoints MUST require a valid API key sent in the
+      X-API-Key header. The redirect endpoint (GET /{shortCode}) is
+      publicly accessible without authentication.
+    measurable_target: "100% of write endpoints return 401 on missing/invalid key"
+
+  - id: NFR-005
+    category: security
+    description: >
+      Click analytics MUST NOT store raw IP addresses. IPs MUST be hashed
+      (SHA-256 + per-tenant salt) before persistence to comply with GDPR.
+    measurable_target: "0 raw IPs in analytics table (verified by automated schema test)"
+
+  - id: NFR-006
+    category: scalability
+    description: >
+      The service MUST handle horizontal scaling by keeping all hot-path state
+      in Redis. No redirect request SHALL require a database read if the
+      short code is cache-resident.
+    measurable_target: "Cache hit rate ≥ 95% under steady-state traffic"
+
+  - id: NFR-007
+    category: reliability
+    description: >
+      The service MUST maintain 99.9% monthly uptime (≤ 43.8 min downtime/month),
+      with automatic failover to a read replica if the primary database is unavailable.
+    measurable_target: "99.9% uptime SLA measured monthly"
+
+  - id: NFR-008
+    category: accessibility
+    description: >
+      Any web-facing UI MUST meet WCAG 2.1 AA. The redirect itself is
+      machine-level behaviour and is exempt.
+    measurable_target: "0 WCAG AA violations in axe-core scan"
+
+# =============================================================================
+# 4. GHERKIN SCENARIOS
+# =============================================================================
+
+gherkin_scenarios:
+
+  - scenario_id: SC-001
+    title: "Successfully shorten a valid URL"
+    type: happy_path
+    given:
+      - "a user holds a valid API key with the 'write' scope"
+      - "the long URL 'https://example.com/some/very/long/path?q=1' has not been shortened before"
+    when:
+      - "the user sends POST /api/v1/urls with body {\"longUrl\": \"https://example.com/some/very/long/path?q=1\"}"
+    then:
+      - "the API responds with HTTP 201 Created"
+      - "the response body contains a 'shortUrl' field matching pattern '^https://sho\\.rt/[A-Za-z0-9]{6,10}$'"
+      - "the response body contains 'shortCode', 'longUrl', 'createdAt', and 'expiresAt' fields"
+      - "a subsequent GET /api/v1/urls/{shortCode} returns the same longUrl"
+
+  - scenario_id: SC-002
+    title: "Redirect to original URL via short code"
+    type: happy_path
+    given:
+      - "a short code 'aB3xY9' exists in the system and maps to 'https://destination.example.com'"
+      - "the URL is active (not expired, not deleted)"
+    when:
+      - "any client sends GET /aB3xY9"
+    then:
+      - "the server responds with HTTP 302 Found"
+      - "the Location response header equals 'https://destination.example.com'"
+      - "the response arrives within 50 ms"
+      - "a click event is recorded asynchronously"
+
+  - scenario_id: SC-003
+    title: "Create short URL with custom alias"
+    type: happy_path
+    given:
+      - "a user holds a valid API key"
+      - "the alias 'summer-sale' is not already in use"
+    when:
+      - "the user sends POST /api/v1/urls with body {\"longUrl\": \"https://shop.example.com/sale\", \"alias\": \"summer-sale\"}"
+    then:
+      - "the API responds with HTTP 201 Created"
+      - "the response 'shortCode' field equals 'summer-sale'"
+      - "GET /summer-sale redirects to 'https://shop.example.com/sale'"
+
+  - scenario_id: SC-004
+    title: "Reject an invalid (non-HTTP) URL"
+    type: error_path
+    given:
+      - "a user holds a valid API key"
+    when:
+      - "the user sends POST /api/v1/urls with body {\"longUrl\": \"javascript:alert(1)\"}"
+    then:
+      - "the API responds with HTTP 422 Unprocessable Entity"
+      - "the response body contains an 'errors' array"
+      - "the first error has 'field': 'longUrl' and 'code': 'INVALID_SCHEME'"
+      - "no URL record is persisted"
+
+  - scenario_id: SC-005
+    title: "Reject an SSRF-targeting private IP URL"
+    type: error_path
+    given:
+      - "a user holds a valid API key"
+    when:
+      - "the user sends POST /api/v1/urls with body {\"longUrl\": \"http://192.168.1.1/admin\"}"
+    then:
+      - "the API responds with HTTP 422 Unprocessable Entity"
+      - "the response body error code is 'SSRF_BLOCKED'"
+      - "the event is logged to the security audit log"
+      - "no redirect record is created"
+
+  - scenario_id: SC-006
+    title: "Access an expired short URL returns 410 Gone"
+    type: error_path
+    given:
+      - "a short code 'exp123' exists with expiresAt set to 2026-01-01T00:00:00Z"
+      - "the current time is after 2026-01-01T00:00:00Z"
+    when:
+      - "a client sends GET /exp123"
+    then:
+      - "the server responds with HTTP 410 Gone"
+      - "the response body contains 'code': 'URL_EXPIRED'"
+      - "no redirect occurs"
+      - "no click event is recorded"
+
+  - scenario_id: SC-007
+    title: "Custom alias conflict returns 409"
+    type: edge_case
+    given:
+      - "a user holds a valid API key"
+      - "the alias 'my-brand' is already registered by another user"
+    when:
+      - "the user sends POST /api/v1/urls with body {\"longUrl\": \"https://new.example.com\", \"alias\": \"my-brand\"}"
+    then:
+      - "the API responds with HTTP 409 Conflict"
+      - "the response body error code is 'ALIAS_TAKEN'"
+      - "no new record is created"
+
+  - scenario_id: SC-008
+    title: "Rate limit exceeded returns 429 with Retry-After"
+    type: edge_case
+    given:
+      - "a user holds a valid API key"
+      - "the user has already sent 100 POST /api/v1/urls requests in the current 60-second window"
+    when:
+      - "the user sends the 101st POST /api/v1/urls request"
+    then:
+      - "the API responds with HTTP 429 Too Many Requests"
+      - "the response includes a 'Retry-After' header with the seconds until window reset"
+      - "the response body contains 'code': 'RATE_LIMIT_EXCEEDED'"
+      - "no URL record is created"
+
+  - scenario_id: SC-009
+    title: "Delete own short URL"
+    type: happy_path
+    given:
+      - "a user holds a valid API key and owns short code 'del456'"
+    when:
+      - "the user sends DELETE /api/v1/urls/del456"
+    then:
+      - "the API responds with HTTP 204 No Content"
+      - "subsequent GET /del456 returns HTTP 404 Not Found"
+      - "the record is soft-deleted (deleted_at timestamp set)"
+
+  - scenario_id: SC-010
+    title: "Unknown short code returns 404"
+    type: edge_case
+    given:
+      - "no URL record exists for short code 'xxxxxx'"
+    when:
+      - "a client sends GET /xxxxxx"
+    then:
+      - "the server responds with HTTP 404 Not Found"
+      - "the response body contains 'code': 'SHORT_CODE_NOT_FOUND'"
+
+# =============================================================================
+# 5. OPENAPI CONTRACT
+# =============================================================================
+
+openapi_contract:
+  openapi: "3.1.0"
+  info:
+    title: URL Shortener API
+    version: "1.0.0"
+    description: >
+      REST API for creating, managing, and analysing shortened URLs.
+    contact:
+      name: Platform Team
+      email: platform@example.com
+    license:
+      name: MIT
+
+  servers:
+    - url: https://api.sho.rt/v1
+      description: Production
+    - url: https://staging-api.sho.rt/v1
+      description: Staging
+
+  security:
+    - apiKey: []
+
+  components:
+    securitySchemes:
+      apiKey:
+        type: apiKey
+        in: header
+        name: X-API-Key
+
+    schemas:
+      CreateUrlRequest:
+        type: object
+        required: [longUrl]
+        properties:
+          longUrl:
+            type: string
+            format: uri
+            maxLength: 2048
+            example: "https://example.com/some/very/long/path?campaign=summer"
+          alias:
+            type: string
+            pattern: "^[A-Za-z0-9-]{3,32}$"
+            example: "summer-sale"
+          expiresAt:
+            type: string
+            format: date-time
+            example: "2026-12-31T23:59:59Z"
+          ttl:
+            type: string
+            description: "ISO 8601 duration, alternative to expiresAt"
+            example: "P30D"
+
+      UrlResponse:
+        type: object
+        properties:
+          shortCode:
+            type: string
+            example: "aB3xY9"
+          shortUrl:
+            type: string
+            format: uri
+            example: "https://sho.rt/aB3xY9"
+          longUrl:
+            type: string
+            format: uri
+          alias:
+            type: string
+            nullable: true
+          createdAt:
+            type: string
+            format: date-time
+          expiresAt:
+            type: string
+            format: date-time
+            nullable: true
+          isActive:
+            type: boolean
+
+      StatsResponse:
+        type: object
+        properties:
+          shortCode:
+            type: string
+          totalClicks:
+            type: integer
+          uniqueVisitors:
+            type: integer
+          clicksByDay:
+            type: array
+            items:
+              type: object
+              properties:
+                date:
+                  type: string
+                  format: date
+                clicks:
+                  type: integer
+          topCountries:
+            type: array
+            items:
+              type: object
+              properties:
+                countryCode:
+                  type: string
+                clicks:
+                  type: integer
+          topReferrers:
+            type: array
+            items:
+              type: object
+              properties:
+                referrer:
+                  type: string
+                clicks:
+                  type: integer
+
+      ErrorResponse:
+        type: object
+        required: [code, message]
+        properties:
+          code:
+            type: string
+            enum:
+              - INVALID_SCHEME
+              - SSRF_BLOCKED
+              - ALIAS_TAKEN
+              - RATE_LIMIT_EXCEEDED
+              - SHORT_CODE_NOT_FOUND
+              - URL_EXPIRED
+              - URL_DELETED
+              - UNAUTHORIZED
+              - FORBIDDEN
+              - INTERNAL_ERROR
+          message:
+            type: string
+          errors:
+            type: array
+            items:
+              type: object
+              properties:
+                field:
+                  type: string
+                code:
+                  type: string
+                detail:
+                  type: string
+          requestId:
+            type: string
+
+    responses:
+      Unauthorized:
+        description: Missing or invalid API key
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ErrorResponse"
+      TooManyRequests:
+        description: Rate limit exceeded
+        headers:
+          Retry-After:
+            schema:
+              type: integer
+            description: Seconds until the rate limit window resets
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ErrorResponse"
+
+  paths:
+
+    /urls:
+      post:
+        operationId: createShortUrl
+        summary: Create a short URL
+        description: >
+          Accepts a long URL and returns a short code. Optionally accepts a
+          custom alias and expiry. Requires a valid API key.
+        tags: [URLs]
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateUrlRequest"
+        responses:
+          "201":
+            description: Short URL created
+            headers:
+              Location:
+                schema:
+                  type: string
+                description: URL of the newly created resource
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/UrlResponse"
+          "400":
+            description: Bad request (malformed JSON)
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "401":
+            $ref: "#/components/responses/Unauthorized"
+          "409":
+            description: Alias already taken
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "422":
+            description: Invalid URL (scheme, SSRF, format)
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "429":
+            $ref: "#/components/responses/TooManyRequests"
+
+    /urls/{shortCode}:
+      parameters:
+        - name: shortCode
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9-]{3,32}$"
+
+      get:
+        operationId: getUrlDetails
+        summary: Get URL metadata
+        description: Returns metadata for a short URL. Does NOT redirect.
+        tags: [URLs]
+        responses:
+          "200":
+            description: URL metadata
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/UrlResponse"
+          "401":
+            $ref: "#/components/responses/Unauthorized"
+          "404":
+            description: Short code not found
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+
+      delete:
+        operationId: deleteUrl
+        summary: Delete a short URL
+        description: Soft-deletes the URL. Owner only. After deletion GET /{shortCode} returns 404.
+        tags: [URLs]
+        responses:
+          "204":
+            description: Successfully deleted
+          "401":
+            $ref: "#/components/responses/Unauthorized"
+          "403":
+            description: Not the owner of this short URL
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "404":
+            description: Short code not found
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+
+    /urls/{shortCode}/stats:
+      get:
+        operationId: getUrlStats
+        summary: Get click analytics for a short URL
+        description: Returns aggregate click statistics. Owner only.
+        tags: [Analytics]
+        parameters:
+          - name: shortCode
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: from
+            in: query
+            schema:
+              type: string
+              format: date
+            description: Start date for stats window (inclusive), default 30 days ago
+          - name: to
+            in: query
+            schema:
+              type: string
+              format: date
+            description: End date for stats window (inclusive), default today
+        responses:
+          "200":
+            description: Click statistics
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/StatsResponse"
+          "401":
+            $ref: "#/components/responses/Unauthorized"
+          "403":
+            description: Not the owner
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "404":
+            description: Short code not found
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+
+    /{shortCode}:
+      get:
+        operationId: redirectToLongUrl
+        summary: Redirect to original URL
+        description: >
+          Public endpoint. Resolves the short code and issues an HTTP 302
+          redirect. Returns 404 if unknown, 410 if expired.
+        tags: [Redirect]
+        security: []          # no auth required
+        parameters:
+          - name: shortCode
+            in: path
+            required: true
+            schema:
+              type: string
+        responses:
+          "302":
+            description: Redirect to original URL
+            headers:
+              Location:
+                schema:
+                  type: string
+                  format: uri
+              Cache-Control:
+                schema:
+                  type: string
+                  example: "no-store"
+          "404":
+            description: Short code not found or deleted
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+          "410":
+            description: URL has expired
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/ErrorResponse"
+
+    /health:
+      get:
+        operationId: healthCheck
+        summary: Service health check
+        tags: [Operations]
+        security: []
+        responses:
+          "200":
+            description: Service is healthy
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      enum: [ok, degraded]
+                    version:
+                      type: string
+                    checks:
+                      type: object
+                      properties:
+                        database:
+                          type: string
+                          enum: [ok, error]
+                        cache:
+                          type: string
+                          enum: [ok, error]
+
+# =============================================================================
+# 6. ACCEPTANCE CRITERIA
+# =============================================================================
+
+acceptance_criteria:
+
+  - id: AC-001
+    criterion: "POST /api/v1/urls with a valid HTTPS URL returns 201 and a shortUrl matching ^https://sho\\.rt/[A-Za-z0-9]{6,10}$"
+    maps_to: [FR-001, SC-001]
+
+  - id: AC-002
+    criterion: "GET /{shortCode} returns 302 with correct Location header within 50 ms at p99 under 10 k RPS load"
+    maps_to: [FR-002, NFR-001, SC-002]
+
+  - id: AC-003
+    criterion: "POST /api/v1/urls with scheme 'javascript:' or 'file:' returns 422 with code INVALID_SCHEME"
+    maps_to: [FR-003, SC-004]
+
+  - id: AC-004
+    criterion: "POST /api/v1/urls with a private-range IP URL returns 422 with code SSRF_BLOCKED and writes to security audit log"
+    maps_to: [FR-003, NFR-003, SC-005]
+
+  - id: AC-005
+    criterion: "101st POST /api/v1/urls in a 60-second window returns 429 with Retry-After header"
+    maps_to: [FR-004, NFR-004, SC-008]
+
+  - id: AC-006
+    criterion: "DELETE /api/v1/urls/{shortCode} by owner returns 204; subsequent GET /{shortCode} returns 404"
+    maps_to: [FR-005, SC-009]
+
+  - id: AC-007
+    criterion: "GET /{shortCode} for an expired URL returns 410 with code URL_EXPIRED; no redirect occurs"
+    maps_to: [FR-006, SC-006]
+
+  - id: AC-008
+    criterion: "POST with custom alias returns 201 with shortCode equal to the supplied alias; duplicate alias returns 409"
+    maps_to: [FR-007, SC-003, SC-007]
+
+  - id: AC-009
+    criterion: "GET /api/v1/urls/{shortCode}/stats returns JSON with totalClicks, clicksByDay, topCountries; no raw IPs present"
+    maps_to: [FR-008, NFR-005]
+
+  - id: AC-010
+    criterion: "All endpoints except GET /{shortCode} and GET /health return 401 when X-API-Key is absent or invalid"
+    maps_to: [NFR-004]
+
+  - id: AC-011
+    criterion: "Redis cache hit rate ≥ 95% under 10-minute steady-state load test; no DB read on cache hit path"
+    maps_to: [NFR-006]
+
+# =============================================================================
+# 7. OUT OF SCOPE
+# =============================================================================
+
+out_of_scope:
+  - "QR code generation for short URLs"
+  - "Browser extension or mobile app"
+  - "Bulk URL import via CSV upload"
+  - "Team / organisation management and shared link ownership"
+  - "Custom domain support (CNAME) for white-label shortening"
+  - "Real-time streaming analytics dashboard"
+  - "Link-in-bio landing pages"
+  - "Automatic long-URL reachability checks (uptime monitoring)"
+
+# =============================================================================
+# 8. OPEN QUESTIONS
+# =============================================================================
+
+open_questions:
+
+  - question: "Should the redirect use 301 (cacheable, fewer hops) or 302 (always hits service, enables analytics)? 302 assumed for now."
+    owner: platform-lead
+    deadline: "2026-06-01"
+
+  - question: "What is the maximum allowed TTL for a short URL? No upper bound currently specified."
+    owner: product-manager
+    deadline: "2026-06-01"
+
+  - question: "Does GDPR consent apply to referrer logging as well as IP hashing? Legal review needed."
+    owner: legal
+    deadline: "2026-06-07"
+
+  - question: "Should anonymous (unauthenticated) users be allowed to create short URLs with stricter rate limits?"
+    owner: product-manager
+    deadline: "2026-06-01"
+
+  - question: "Is 6-character NanoID sufficient for the expected URL volume, or should we use 8 characters from the start?"
+    owner: platform-lead
+    deadline: "2026-06-01"
+
+# =============================================================================
+# 9. DIAGRAM REFERENCES
+# =============================================================================
+
+diagrams:
+  sequence:
+    title: "URL Shortening & Redirect Flow"
+    file: specs/diagrams/sequence-url-shortening.md
+  er:
+    title: "Data Model — Entity Relationship Diagram"
+    file: specs/diagrams/er-data-model.md
+  state:
+    title: "URL Lifecycle State Machine"
+    file: specs/diagrams/state-url-lifecycle.md
